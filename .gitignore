@@ -1,0 +1,11 @@
+# macOS
+.DS_Store
+
+# 编辑器 / 系统
+*.swp
+*~
+Thumbs.db
+
+# 日志与临时
+*.log
+*.tmp
