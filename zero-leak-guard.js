@@ -1,38 +1,50 @@
 /**
- * zero-leak-guard.js — 程序化零泄露输出守卫（Math_Agent 预设自带插件）。
+ * zero-leak-guard.js — Programmatic zero-leak output guard (Math_Agent preset plugin).
  *
- * 挂在 `llm/stream` waterfall 上，对教练会话的每次模型输出做整体检查：
- * 命中答案线索模式（数值、区间、对错判断、答案形态）时，整段替换为固定
- * 拦截文案，模型的原始输出一个字都不会到达训练者。
+ * Hooks into the `llm/stream` waterfall and inspects the coach's entire reply
+ * for coaching sessions: when answer-clue patterns (numeric values, intervals,
+ * correctness judgments, answer forms) are detected, the entire response is
+ * replaced — not a single character of the model's original output reaches the
+ * trainee.
  *
- * - 只对 system 含教练特征（零泄露铁律/数学教练）的请求启用；其余请求
- *   完全透传，不影响任何其他会话。
- * - 拦截发生在流层：会话日志记录的是拦截文案而非泄露文本，模型下一轮
- *   会看到自己被拦截的通知，从而自动改用合规表述。
- * - 本文件随预设目录一起复制、一起加载，无需安装 npm 包。
+ * - Activates only for requests whose system prompt carries coaching signatures
+ *   ("Zero-Leak Iron Rules" / "Math Coach"); all other requests pass through
+ *   untouched.
+ * - Interception happens at the stream layer: session logs record the
+ *   interception message, not the leaked text. On the next turn, the model
+ *   sees its own interception notice and automatically reformulates.
+ * - Leak patterns cover both Chinese and English coaching replies, because the
+ *   persona replies in the trainee's language (Chinese trainees get Chinese
+ *   coaching, so Chinese leak wording must also be caught).
+ * - This file ships inside the preset directory and loads via a relative path;
+ *   no npm package required.
  */
 export default {
   name: 'zero-leak-guard',
 
   apply(ctx) {
     const LEAK_PATTERNS = [
-      // 区间：x 到/至/~/-/和/与/逗号 y（含 之间/范围/左右 等限定）
+      // ── intervals: x to/from y (Chinese & English) ──
+      // x到y之间 / x和y之间 / x~y / 介于x与y
       /\d+(?:\.\d+)?\s*(?:到|至|~|–|—|-|和|与|,|，)\s*\d+(?:\.\d+)?\s*(?:之间|范围|左右|附近|上下)/,
-      // 介于/在/处于 x (和|与|到|至) y
       /(?:介于|在|处于)\s*\d+(?:\.\d+)?\s*(?:和|与|到|至|~|–|—|-)\s*\d+(?:\.\d+)?/,
-      // 判断词后接数字/符号（大了/小了/接近/对了/错了/不是/排除 …）
+      // between x and y / from x to y
+      /(?:between|from)\s*\d+(?:\.\d+)?\s*(?:and|to)\s*\d+(?:\.\d+)?/,
+      // ── judgment words followed by a number (Chinese & English) ──
       /(?:不是|不对|错了|正确|接近|大了|小了|对了|排除|差一点|差不多)\s*[0-9φπe]/,
-      // 数字/符号后接判断词（“1大了”“1接近了”“1不满足方程”）
       /[0-9φπe]\s*(?:大了|小了|接近|对了|错了|不是|差一点|差不多|还差|不满足|不符合)/,
-      // 答案形态表述：答案/结果是/等于/约等于 后接数字或常数
+      /(?:too (?:big|small|high|low|close)|close to|almost|nearly|right|wrong|correct|incorrect|not (?:right|wrong|correct|that|the number))\s*[0-9φπe]/,
+      /[0-9φπe]\s*(?:is\s+)?(?:too (?:big|small|high|low|close)|wrong|right|correct|incorrect|close|almost|nearly|not\s+it)/,
+      // ── answer-form phrasing followed by a number (Chinese & English) ──
       /(?:答案|结果|极限|就是|等于|约等于|大约是)\s*(?:是|=)?\s*[0-9φπe]/,
-      // 教练主动给出带小数的数值（答案候选形态）
+      /(?:the answer|answer is|result is|limit is|equals|approximately|about)\s*(?:is|=)?\s*[0-9φπe]/,
+      // ── coach volunteering a decimal value (answer-candidate form) ──
       /[0-9]\.[0-9]{2,}/,
-      // 数值 + 左右/附近/上下（“1.6左右”），但排除“左右两边”等数学术语
+      // ── value + 左右/附近/上下 ("1.6左右"), excluding "左右两边" math idioms ──
       /\d+(?:\.\d+)?\s*(?:左右|附近|上下)(?!边)/,
     ]
 
-    const BLOCKED_TEXT = '【零泄露守卫拦截】这条回复包含答案线索（数值/区间/对错判断），已按训练原则拦截，未放行。请重新表述，只讨论训练者的论证结构，不评判任何数值。'
+    const BLOCKED_TEXT = '[Zero-Leak Guard] This reply contained answer clues (numeric value / interval / right-wrong judgment) and was blocked by the training principle — nothing was delivered. Please rephrase and discuss only the trainee\'s argument structure, without judging any value.'
 
     function checkLeak(text) {
       for (const re of LEAK_PATTERNS) {
@@ -43,8 +55,8 @@ export default {
 
     ctx.on('llm/stream', async function* (options, next) {
       const system = options.system || ''
-      // 只对教练会话启用；其他请求完全透传，零影响
-      if (!system.includes('零泄露铁律') && !system.includes('数学教练')) {
+      // Only enable for coaching sessions; all other requests pass through untouched
+      if (!system.includes('Zero-Leak Iron Rules') && !system.includes('Math Coach')) {
         yield* next()
         return
       }
@@ -61,7 +73,7 @@ export default {
         }
       }
       if (checkLeak(text)) {
-        // 整体替换：模型吐出的原话一个字都不放行
+        // Replace the whole reply: not a single character of the model's original output reaches the trainee
         yield { type: 'text-delta', index: 0, text: BLOCKED_TEXT }
         yield { type: 'block-end', index: 0, block: { type: 'text', text: BLOCKED_TEXT } }
         for (const chunk of rest) {

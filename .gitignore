@@ -1,11 +1,11 @@
 # macOS
 .DS_Store
 
-# 编辑器 / 系统
+# Editors / System
 *.swp
 *~
 Thumbs.db
 
-# 日志与临时
+# Logs and temp files
 *.log
 *.tmp

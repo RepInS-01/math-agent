@@ -1,40 +1,40 @@
-# 最终总结（Final Synthesis）
+# Final Synthesis
 
-仅当训练过程中**有任意一条思路跑通**时，才进入最终总结阶段。本技能定义总结的执行流程与输出结构。
+Enter the final synthesis stage only when **at least one approach was validated** during training. This skill defines the execution flow and output structure.
 
-## 触发条件
+## Trigger Conditions
 
-- 训练者**独立给出**一条完整、自洽、可复核的论证（含推导与验证），且教练审阅后确认该论证在结构上成立——这才算"跑通"。
-- 训练者只是报出一个数、猜中、或说出最终数值，**不算跑通**，不触发最终总结；此时继续训练流程，让训练者补出论证。
-- 在此之前，即使训练者要求总结，也只能给阶段性总结。
+- The trainee **independently produced** a complete, self-consistent, reviewable argument (including derivation and verification), and the coach reviewed it and confirmed it is structurally sound — only that counts as "validated".
+- The trainee merely stating a number, guessing correctly, or uttering a final value does **not** count as validated and does not trigger the final synthesis; keep training and have the trainee complete the argument.
+- Until then, even if the trainee asks for a summary, give only an interim summary.
 
-## 执行流程
+## Execution Flow
 
-1. **枚举所有思路**：从思路追踪记录中取出全部尝试过的思路。
-2. **逐个重跑**：教练自己把每条思路走一遍，不只是当前成功的那一条。
-   - 对"有瑕疵"的路线：尝试补齐，判断它到底是否可行；不要武断断定数学上不可能——它可能只是训练者当时水平有限、最终没跑通。
-3. **抽象与归纳**：提炼训练者自己的思路模式（用了什么手法、踩了什么坑、哪些直觉是对的）。
-4. **分类**：每条思路归入三类之一——
-   - 成立（最终跑通）
-   - 有缺陷（数学上不成立，指出具体环节）
-   - 暂时未跑通但可能可行（给出方向，不武断否定）
-5. **给出完整解答或证明**：以训练者能消化的形式呈现。
-6. **引用知识库**：如有知识库（见 knowledge-base 技能），优先引用有事实与数据支撑的理解，标注来源。
+1. **Enumerate all approaches**: collect every approach from the attempt-tracking record.
+2. **Re-run each one**: the coach walks through every approach, not just the one that succeeded.
+   - For "flawed" paths: try to complete them and judge whether they are actually viable; do not flatly declare them mathematically impossible — they may simply not have been completed at the trainee's current level.
+3. **Abstract and synthesize**: distill the trainee's own reasoning patterns (which techniques they used, which pitfalls they hit, which intuitions were right).
+4. **Classify**: put each approach into one of three categories —
+   - Validated (ran through)
+   - Flawed (mathematically unsound; point out the specific step)
+   - Not yet completed but possibly viable (give direction; do not dismiss outright)
+5. **Give the complete solution or proof**: in a form the trainee can digest.
+6. **Cite the knowledge base**: if one is available (see the knowledge-base skill), prefer understandings backed by facts and data, with sources.
 
-## 输出结构
+## Output Structure
 
 ```
-# 最终总结
-## 完整解答 / 证明
-## 训练者思路的归纳
-## 思路分类
-- 成立：
-- 有缺陷：
-- 未跑通但可能可行：
-## 知识库引用（如可用）
+# Final Synthesis
+## Complete Solution / Proof
+## Synthesis of the Trainee's Approaches
+## Approach Classification
+- Validated:
+- Flawed:
+- Not yet completed but possibly viable:
+## Knowledge Base Citations (if available)
 ```
 
-## 注意
+## Notes
 
-- 最终总结是"陪训练者完成一次完整复盘"，不是炫耀标准答案。
-- 如果训练者希望继续练同型问题，给出难度递进的下一题方向。
+- The final synthesis is a full debrief *with* the trainee, not a place to show off the standard answer.
+- If the trainee wants to keep practicing similar problems, suggest the next problem of increasing difficulty.

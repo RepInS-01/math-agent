@@ -1,34 +1,33 @@
-# 知识库接入方案（Knowledge Base Interface）
+# Knowledge Base Interface
 
-本技能定义一个**可扩展**的知识库接入接口，用于：巩固已掌握的想法、检索类似问题、检索有数据或事实支撑的数学理解。
-当前阶段为**预留接口**，可先不实际接入，但接口契约固定，后续按契约实现即可接入。
+This skill defines an **extensible** knowledge-base integration interface for: consolidating mastered ideas, retrieving similar problems, and retrieving mathematical understanding backed by data or facts. It is currently a **reserved interface** — not actually wired in yet, but the contract is fixed so any implementation can plug in later.
 
-## 统一接口契约
+## Unified Interface Contract
 
-所有知识库源实现同一个 `search` 接口：
+Every knowledge-base source implements the same `search` interface:
 
 ```
 search(query) -> [{ source, title, snippet, url?, confidence: 'fact'|'data'|'reference'|'heuristic' }]
 ```
 
-- `confidence` 标注内容的性质：fact（数学事实）、data（数据/计算支撑）、reference（标准参考）、heuristic（启发式/个人经验）。
-- 任何实现都不得返回未经核实的"审美"或"一家之言"作为事实。
+- `confidence` tags the nature of the content: fact (mathematical fact), data (data/computation-backed), reference (standard reference), heuristic (heuristic/personal experience).
+- No implementation may return unverified "taste" or "one-off opinion" as fact.
 
-## 本地知识库接口（预留）
+## Local Knowledge Base Interface (reserved)
 
-- 约定目录：工作区 `kb/`（或预设目录 `knowledge/`），每个主题一个 Markdown 文件，文件名 = 主题 slug。
-- 检索方式：`glob` + `grep` 对 `kb/` 做关键词检索；命中后 `read` 精确读取相关文件。
-- 索引文件（可选）：`kb/index.md` 维护主题 → 文件映射。
-- 接入状态：**未接入**（接口已定义，目录约定已就绪）。
+- Convention: workspace `kb/` directory (or preset `knowledge/`), one Markdown file per topic, filename = topic slug.
+- Retrieval: `glob` + `grep` keyword search over `kb/`; on a hit, `read` the relevant files precisely.
+- Optional index: `kb/index.md` maintains a topic → file mapping.
+- Status: **not wired** (interface defined, directory convention ready).
 
-## 在线知识库接口（预留）
+## Online Knowledge Base Interface (reserved)
 
-- 使用 `web_search` 检索，用返回的 source URL 作为引用。
-- 检索结果只用于辅助理解与交叉验证，需与本地知识库结果合并去重。
-- 接入状态：**未接入**（依赖当前 web 工具，直接可用但默认不自动触发）。
+- Uses `web_search`, citing returned source URLs.
+- Results are only for auxiliary understanding and cross-validation; merge and deduplicate with local results.
+- Status: **not wired** (depends on the current web tool; usable directly but not auto-triggered by default).
 
-## 使用规则
+## Usage Rules
 
-- 最终总结时：知识库可用则**优先引用**有事实与数据支撑的理解，并给出引用来源。
-- 区分"数学事实/数据支撑"与"个人审美/启发式"：前者可作结论依据，后者只能作为探索方向并明确标注。
-- 检索类似问题时，按"主题相关 → 难度相近 → 已巩固"排序。
+- In the final synthesis: when a knowledge base is available, **prefer** understandings backed by facts and data, and cite the source.
+- Distinguish "mathematical fact / data-backed" from "personal taste / heuristic": the former may ground conclusions, the latter may only serve as an exploration direction and must be labeled as such.
+- When retrieving similar problems, rank by "topic relevance → similar difficulty → already consolidated".
