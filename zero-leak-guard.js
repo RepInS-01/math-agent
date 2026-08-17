@@ -23,6 +23,10 @@ export default {
   name: 'zero-leak-guard',
 
   apply(ctx) {
+    // Numeric-answer token: an ASCII digit, φ/π, or the standalone constant e.
+    // `e` must stay word-boundaried (`\be\b`) and OUTSIDE the digit class —
+    // a bare `e` in a character class also matches the first letter of any
+    // word like "expression", turning "the correct expression" into a false block.
     const LEAK_PATTERNS = [
       // ── intervals: x to/from y (Chinese & English) ──
       // x到y之间 / x和y之间 / x~y / 介于x与y
@@ -31,13 +35,13 @@ export default {
       // between x and y / from x to y
       /(?:between|from)\s*\d+(?:\.\d+)?\s*(?:and|to)\s*\d+(?:\.\d+)?/,
       // ── judgment words followed by a number (Chinese & English) ──
-      /(?:不是|不对|错了|正确|接近|大了|小了|对了|排除|差一点|差不多)\s*[0-9φπe]/,
-      /[0-9φπe]\s*(?:大了|小了|接近|对了|错了|不是|差一点|差不多|还差|不满足|不符合)/,
-      /(?:too (?:big|small|high|low|close)|close to|almost|nearly|right|wrong|correct|incorrect|not (?:right|wrong|correct|that|the number))\s*[0-9φπe]/,
-      /[0-9φπe]\s*(?:is\s+)?(?:too (?:big|small|high|low|close)|wrong|right|correct|incorrect|close|almost|nearly|not\s+it)/,
+      /(?:不是|不对|错了|正确|接近|大了|小了|对了|排除|差一点|差不多)\s*(?:[0-9φπ]|\be\b)/,
+      /(?:[0-9φπ]|\be\b)\s*(?:大了|小了|接近|对了|错了|不是|差一点|差不多|还差|不满足|不符合)/,
+      /(?:too (?:big|small|high|low|close)|close to|almost|nearly|right|wrong|correct|incorrect|not (?:right|wrong|correct|that|the number))\s*(?:[0-9φπ]|\be\b)/,
+      /(?:[0-9φπ]|\be\b)\s*(?:is\s+)?(?:too (?:big|small|high|low|close)|wrong|right|correct|incorrect|close|almost|nearly|not\s+it)/,
       // ── answer-form phrasing followed by a number (Chinese & English) ──
-      /(?:答案|结果|极限|就是|等于|约等于|大约是)\s*(?:是|=)?\s*[0-9φπe]/,
-      /(?:the answer|answer is|result is|limit is|equals|approximately|about)\s*(?:is|=)?\s*[0-9φπe]/,
+      /(?:答案|结果|极限|就是|等于|约等于|大约是)\s*(?:是|=)?\s*(?:[0-9φπ]|\be\b)/,
+      /(?:the answer|answer is|result is|limit is|equals|approximately|about)\s*(?:is|=)?\s*(?:[0-9φπ]|\be\b)/,
       // ── coach volunteering a decimal value (answer-candidate form) ──
       /[0-9]\.[0-9]{2,}/,
       // ── value + 左右/附近/上下 ("1.6左右"), excluding "左右两边" math idioms ──

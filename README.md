@@ -21,6 +21,7 @@ math-coach/
 ├── preset.yml              # Preset metadata (name / description)
 ├── agent.cordis.yml        # Cordis composition: tools, persona, skills, guard registration
 ├── zero-leak-guard.js      # Programmatic zero-leak output guard plugin (loaded via relative path; copied with the preset)
+├── zero-leak-guard.test.mjs # Guard test corpus: leak samples that must block, clean replies that must pass
 ├── README.md               # This file
 ├── LICENSE                 # MIT License
 └── skills/
@@ -67,7 +68,22 @@ agentPresets.standingKeyFor('math-coach')  # → mounted OK
 
 ### Known Boundaries
 
-The programmatic guard blocks **enumerable leak forms** (numeric values, intervals, judgment words). **Semantic-level** hints without numbers (e.g., "this number happens to be the root of the equation you just derived") are constrained by persona iron rules. When new variants are discovered, simply add them to `LEAK_PATTERNS`.
+The programmatic guard blocks **enumerable leak forms** (numeric values, intervals, judgment words) in the coach's own reply text. Two channels remain persona-constrained rather than guard-enforced:
+
+- **Semantic-level** hints without numbers (e.g., "this number happens to be the root of the equation you just derived").
+- **Tool results**: the guard does not scan tool output, so the persona iron rules forbid the coach from running code/shell or web searches to compute, approximate, or verify the answer for the trainee.
+
+When new variants are discovered, simply add them to `LEAK_PATTERNS` (plus a sample in `zero-leak-guard.test.mjs`).
+
+## Testing
+
+The guard ships with a zero-dependency test corpus (Node's built-in test runner):
+
+```bash
+node --test zero-leak-guard.test.mjs
+```
+
+Run it after every change to `LEAK_PATTERNS`. The corpus has two halves: leak samples that must be blocked, and legitimate coaching replies that must pass — add every newly discovered leak variant to the former and every reported false positive to the latter.
 
 ## Knowledge Base Integration (Reserved)
 
