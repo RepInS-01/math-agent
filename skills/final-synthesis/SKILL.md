@@ -5,6 +5,7 @@ Enter the final synthesis stage only when **at least one approach was validated*
 ## Trigger Conditions
 
 - The trainee **independently produced** a complete, self-consistent, reviewable argument (including derivation and verification), and the coach reviewed it and confirmed it is structurally sound — only that counts as "validated".
+- The trigger is programmatic: an attempt with status `validated` recorded through the `attempt_update` tool. The zero-leak guard unlocks the final synthesis solely from that record; without it, answer-clue blocking stays on.
 - The trainee merely stating a number, guessing correctly, or uttering a final value does **not** count as validated and does not trigger the final synthesis; keep training and have the trainee complete the argument.
 - Until then, even if the trainee asks for a summary, give only an interim summary.
 

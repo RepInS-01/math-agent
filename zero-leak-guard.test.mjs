@@ -1,15 +1,17 @@
 /**
- * zero-leak-guard.test.mjs — Test corpus for the zero-leak output guard.
+ * zero-leak-guard.test.mjs — Test corpus for the zero-leak output guard and
+ * the attempt-tracker training-state plugin.
  *
  * Run with:  node --test zero-leak-guard.test.mjs
  *
- * Zero dependencies: uses node:test + node:assert. The plugin is loaded from
- * source via a data: URL so the tests exercise the real shipped file even
+ * Zero dependencies: uses node:test + node:assert. The plugins are loaded from
+ * source via data: URLs so the tests exercise the real shipped files even
  * though the preset has no package.json (bare .js would default to CJS).
  *
- * Two corpus groups:
- *  - LEAK_SAMPLES: replies that MUST be blocked (add every newly discovered
- *    leak variant here together with its LEAK_PATTERNS entry).
+ * Two corpus groups for the guard:
+ *  - LEAK_SAMPLES: replies that MUST be blocked while no attempt is validated
+ *    (add every newly discovered leak variant here together with its
+ *    LEAK_PATTERNS entry).
  *  - CLEAN_SAMPLES: legitimate coaching replies that MUST pass (add every
  *    reported false positive here).
  *
@@ -24,14 +26,18 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const src = readFileSync(join(here, 'zero-leak-guard.js'), 'utf8')
-const { default: plugin } = await import('data:text/javascript;base64,' + Buffer.from(src).toString('base64'))
+const loadPlugin = async (file) =>
+  (await import('data:text/javascript;base64,' + Buffer.from(readFileSync(join(here, file), 'utf8')).toString('base64'))).default
+
+const guard = await loadPlugin('zero-leak-guard.js')
+const tracker = await loadPlugin('attempt-tracker.js')
 
 // Mirrors the persona text in agent.cordis.yml — the guard activates on these
 // signatures. If the persona wording changes, update this AND expect the
 // "non-coaching passthrough" tests to keep guarding the coupling.
 const COACHING_SYSTEM = 'You are a Math Coach ... ## Zero-Leak Iron Rules ...'
 const OTHER_SYSTEM = 'You are a helpful coding assistant.'
+const SESSION = 'session-1'
 
 // ── corpus ──────────────────────────────────────────────────────────────────
 
@@ -72,7 +78,7 @@ const CLEAN_SAMPLES = [
   'Substitute L into your equation and check both sides yourself.',
 ]
 
-// ── harness ─────────────────────────────────────────────────────────────────
+// ── guard harness ───────────────────────────────────────────────────────────
 
 async function* fakeInnerStream(deltas, extras = []) {
   for (const text of deltas) yield { type: 'text-delta', index: 0, text }
@@ -81,18 +87,25 @@ async function* fakeInnerStream(deltas, extras = []) {
   yield { type: 'finish', reason: 'stop' }
 }
 
-function applyGuard() {
+/**
+ * @param {object} [services] - map of cordis service name -> value; the fake
+ *   ctx.get() returns from it (undefined when absent, like a missing plugin).
+ */
+function applyGuard(services = {}) {
   const handlers = {}
-  const ctx = { on: (event, fn) => { handlers[event] = fn } }
-  plugin.apply(ctx)
-  assert.ok(handlers['llm/stream'], 'plugin must hook llm/stream')
+  const ctx = {
+    on: (event, fn) => { handlers[event] = fn },
+    get: (name) => services[name],
+  }
+  guard.apply(ctx)
+  assert.ok(handlers['llm/stream'], 'guard must hook llm/stream')
   return handlers['llm/stream']
 }
 
-async function runGuard(system, deltas, extras = []) {
-  const handler = applyGuard()
+async function runGuard(system, deltas, extras = [], { services = {}, sessionId = SESSION } = {}) {
+  const handler = applyGuard(services)
   const out = []
-  for await (const chunk of handler({ system }, () => fakeInnerStream(deltas, extras))) {
+  for await (const chunk of handler({ system, sessionId }, () => fakeInnerStream(deltas, extras))) {
     out.push(chunk)
   }
   return out
@@ -101,7 +114,9 @@ async function runGuard(system, deltas, extras = []) {
 const textOf = (chunks) =>
   chunks.filter((c) => c.type === 'text-delta').map((c) => c.text).join('')
 
-// ── tests ───────────────────────────────────────────────────────────────────
+const attemptStateStub = (validatedIds) => ({ isValidated: (id) => validatedIds.has(id) })
+
+// ── guard tests ─────────────────────────────────────────────────────────────
 
 test('leak samples are fully replaced, no original character delivered', async () => {
   for (const sample of LEAK_SAMPLES) {
@@ -147,4 +162,124 @@ test('on pass: reasoning chunks are forwarded normally', async () => {
   const reasoning = { type: 'reasoning-delta', text: 'checking the argument structure' }
   const out = await runGuard(COACHING_SYSTEM, ['这一步正确。'], [reasoning])
   assert.ok(out.includes(reasoning), 'reasoning chunk must pass through')
+})
+
+test('validated session: guard stands down, answer-bearing synthesis passes', async () => {
+  const services = { attemptState: attemptStateStub(new Set([SESSION])) }
+  for (const sample of LEAK_SAMPLES) {
+    const out = await runGuard(COACHING_SYSTEM, [sample], [], { services })
+    assert.equal(textOf(out), sample, `validated session, must pass: ${sample}`)
+  }
+})
+
+test('validated flag is per-session: other sessions stay blocked', async () => {
+  const services = { attemptState: attemptStateStub(new Set(['someone-else'])) }
+  const out = await runGuard(COACHING_SYSTEM, ['答案是 2。'], [], { services })
+  assert.ok(textOf(out).includes('[Zero-Leak Guard]'), 'unrelated validation must not unlock this session')
+})
+
+test('missing attemptState service fails closed (keeps blocking)', async () => {
+  const out = await runGuard(COACHING_SYSTEM, ['答案是 2。'], [], { services: {} })
+  assert.ok(textOf(out).includes('[Zero-Leak Guard]'), 'no tracker service → must still block')
+})
+
+// ── attempt-tracker harness ─────────────────────────────────────────────────
+
+function applyTracker() {
+  const provided = {}
+  const tools = new Map()
+  const sections = new Map()
+  const ctx = {
+    provide: (name, value) => { provided[name] = value },
+    tools: { register: (def) => tools.set(def.name, def) },
+    systemPrompt: { section: (sec) => sections.set(sec.name, sec) },
+  }
+  tracker.apply(ctx)
+  assert.ok(provided.attemptState, 'tracker must provide attemptState')
+  assert.ok(tools.has('attempt_update'), 'tracker must register attempt_update')
+  assert.ok(sections.has('attempts:status'), 'tracker must register the attempts:status section')
+  return { provided, tools, sections }
+}
+
+const fakeExec = (session) => ({ agent: { id: session.id, session } })
+const fakeSession = (id, events = []) => ({ id, events })
+const callEvent = (attempts) => ({
+  type: 'tool/call',
+  data: { name: 'attempt_update', arguments: JSON.stringify({ attempts }) },
+})
+
+const VALID_ARGUMENT = { approach: 'monotone convergence', status: 'in-progress' }
+
+// ── attempt-tracker tests ───────────────────────────────────────────────────
+
+test('attempt_update records state and flips isValidated', async () => {
+  const { provided, tools } = applyTracker()
+  const session = fakeSession('s1')
+  const tool = tools.get('attempt_update')
+
+  const r1 = await tool.execute({ attempts: [VALID_ARGUMENT] }, fakeExec(session))
+  assert.deepEqual(r1, { count: 1, validated: false })
+  assert.equal(provided.attemptState.isValidated('s1'), false)
+
+  const r2 = await tool.execute(
+    { attempts: [{ ...VALID_ARGUMENT, status: 'validated' }] },
+    fakeExec(session),
+  )
+  assert.deepEqual(r2, { count: 1, validated: true })
+  assert.equal(provided.attemptState.isValidated('s1'), true)
+  assert.equal(provided.attemptState.isValidated('s2'), false, 'other sessions unaffected')
+})
+
+test('attempt_update render carries counts and lock state, never answer info', async () => {
+  const { tools } = applyTracker()
+  const tool = tools.get('attempt_update')
+  const locked = tool.output.render({}, { count: 2, validated: false })
+  const unlocked = tool.output.render({}, { count: 2, validated: true })
+  assert.match(locked[0].text, /remains locked/)
+  assert.match(unlocked[0].text, /unlocked/)
+})
+
+test('attempt_update rejects malformed input and agent-less calls', async () => {
+  const { tools } = applyTracker()
+  const tool = tools.get('attempt_update')
+  await assert.rejects(tool.execute({ attempts: [{ approach: '', status: 'in-progress' }] }, fakeExec(fakeSession('s1'))))
+  await assert.rejects(tool.execute({ attempts: [{ approach: 'x', status: 'maybe' }] }, fakeExec(fakeSession('s1'))))
+  await assert.rejects(tool.execute({ attempts: 'nope' }, fakeExec(fakeSession('s1'))))
+  await assert.rejects(tool.execute({ attempts: [VALID_ARGUMENT] }, { agent: undefined }))
+})
+
+test('section renders empty-state reminder, then the live table with lock status', async () => {
+  const { tools, sections } = applyTracker()
+  const section = sections.get('attempts:status')
+  const session = fakeSession('s1')
+
+  assert.equal(section.text({}), '', 'no agent → no section')
+  assert.match(section.text({ agent: { session } }), /No attempts recorded yet/)
+
+  await tools.get('attempt_update').execute({ attempts: [VALID_ARGUMENT] }, fakeExec(session))
+  const locked = section.text({ agent: { session } })
+  assert.match(locked, /monotone convergence/)
+  assert.match(locked, /Validated: no/)
+
+  await tools.get('attempt_update').execute(
+    { attempts: [{ ...VALID_ARGUMENT, status: 'validated' }] },
+    fakeExec(session),
+  )
+  assert.match(section.text({ agent: { session } }), /Validated: yes/)
+})
+
+test('state folds back from session tool/call log after a resume', async () => {
+  const { provided, sections } = applyTracker()
+  // fresh process: Map is empty, only the durable log survives
+  const session = fakeSession('resumed', [
+    { type: 'user/message', data: {} },
+    callEvent([VALID_ARGUMENT]),
+    callEvent([VALID_ARGUMENT, { id: 2, approach: 'contradiction', status: 'validated' }]),
+    { type: 'tool/call', data: { name: 'attempt_update', arguments: '{broken json' } },
+    { type: 'tool/call', data: { name: 'bash', arguments: '{"cmd":"ls"}' } },
+  ])
+  const text = sections.get('attempts:status').text({ agent: { session } })
+  assert.match(text, /Validated: yes/, 'latest whole-list snapshot wins')
+  assert.match(text, /contradiction/)
+  assert.equal(provided.attemptState.isValidated('resumed'), true, 'fold must warm the guard-visible state')
 })

@@ -87,19 +87,12 @@ This skill defines the workflow and red lines every Math Coach training session 
 
 ## Attempt Tracking
 
-Keep structured notes in the conversation. Example:
+Attempts are tracked as **program state**, not conversational notes: record them with the `attempt_update` tool (whole-list snapshot — re-send the complete list each time, latest write wins). The current state is rendered into your system prompt every step (`## Attempt Tracking (programmatic state)`); treat it as authoritative.
 
-```
-## Attempt Tracking
-| # | Approach | Status | Stuck at / Issue | Ruled out |
-|---|----------|--------|------------------|-----------|
-| 1 | Direct expansion from the definition | Flawed | Simplification went wrong at step 2 | No |
-| 2 | Proof by contradiction | In progress | — | No |
-```
-
-- Status values: in progress / flawed / validated / incomplete.
-- For long sessions, proactively suggest persisting to `notes/attempts.md` in the workspace (keep it in sync with the conversation).
-- Records contain only approaches and argument status, **never** any answer information.
+- Status values: `in-progress` / `flawed` / `validated` / `incomplete`.
+- Entries describe approaches and argument status only — **never** write answer values, intervals, or correctness hints into `approach`/`note`.
+- `validated` is legitimate only for a complete, self-consistent, reviewable argument from the trainee (including verification); a stated or guessed candidate answer never counts. The zero-leak guard unlocks the final summary solely from this record.
+- For long sessions, you may additionally persist notes to `notes/attempts.md` in the workspace (keep it in sync with the tool state).
 
 ## Feedback Language
 

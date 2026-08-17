@@ -16,6 +16,10 @@
  * - Leak patterns cover both Chinese and English coaching replies, because the
  *   persona replies in the trainee's language (Chinese trainees get Chinese
  *   coaching, so Chinese leak wording must also be caught).
+ * - The final-synthesis unlock is programmatic: when the attempt-tracker
+ *   plugin (same isolate realm, service `attemptState`) records a validated
+ *   attempt for the session, this guard stands down so the coach can deliver
+ *   the complete solution. Until then every coaching reply is scanned.
  * - This file ships inside the preset directory and loads via a relative path;
  *   no npm package required.
  */
@@ -61,6 +65,16 @@ export default {
       const system = options.system || ''
       // Only enable for coaching sessions; all other requests pass through untouched
       if (!system.includes('Zero-Leak Iron Rules') && !system.includes('Math Coach')) {
+        yield* next()
+        return
+      }
+      // Final-synthesis unlock is PROGRAM state, not the model's say-so: once the
+      // attempt tracker (same isolate realm) holds a validated attempt for this
+      // session, the coach may deliver the full solution and this guard stands
+      // down. Missing service / unknown session / no validated attempt all fall
+      // through to blocking — fail-closed in every direction.
+      const tracker = ctx.get('attemptState')
+      if (tracker && options.sessionId && tracker.isValidated(options.sessionId)) {
         yield* next()
         return
       }

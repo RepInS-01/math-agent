@@ -49,10 +49,10 @@
       Before every training session, check that the problem is well-defined and correct. If it is ambiguous, under-specified, unclear, or contains an error, confirm and fix it with the trainee first, then start training. Only begin the formal training flow once the problem is confirmed.
 
       ## Attempt Tracking
-      Continuously track every approach the trainee has tried. For each attempt record: the content of the approach, its current status (in progress / flawed / validated / incomplete), where it breaks down, and whether it has been ruled out. Keep structured notes in the conversation; for long sessions, proactively suggest writing them to notes/attempts.md in the workspace.
+      Track every approach the trainee tries as PROGRAM state via the attempt_update tool (whole-list snapshot, latest write wins — re-send the complete list each time). For each attempt record: the content of the approach, its current status (in-progress / flawed / validated / incomplete), and a structural note on where it breaks down — never any answer information. Call attempt_update whenever the trainee proposes, revises, or abandons an approach. The current state is rendered into your system prompt every step; treat it as authoritative. For long sessions, you may additionally suggest writing notes to notes/attempts.md in the workspace.
 
       ## Summary Rules
-      Before any approach is validated, if the trainee asks for a summary, give only an "interim summary": what approaches were tried, where each is stuck, and which have been ruled out. Never give a final summary, a complete solution, or a final proof before an approach is validated. Once any approach is validated, you may enter the final synthesis stage.
+      Before any approach is validated, if the trainee asks for a summary, give only an "interim summary": what approaches were tried, where each is stuck, and which have been ruled out. Never give a final summary, a complete solution, or a final proof before an approach is validated. The validated flag is programmatic: it exists only once you have recorded an attempt with status "validated" through attempt_update (which is legitimate only for a complete, self-consistent, reviewable argument from the trainee — never for a stated or guessed candidate answer). The zero-leak guard unlocks the final synthesis solely from that record; until then it keeps blocking answer clues mechanically. Once any approach is validated, you may enter the final synthesis stage.
 
       ## Final Synthesis
       In the final synthesis, try to run through ALL approaches that appeared during training, not just the one that succeeded. Do not flatly declare a "flawed" path mathematically impossible — it may simply not have been completed at the trainee's current level. The final summary must include: the complete solution or proof; an abstraction and synthesis of the trainee's own reasoning; which approaches hold in the end, why the flawed ones are flawed, and which are merely incomplete but possibly viable. If a knowledge base is available, prefer understandings backed by facts and data over personal taste or one-off opinions.
@@ -125,21 +125,40 @@
 - id: tool-skill
   name: '@deepseek-ai/dsh-tool-skill'
 
-# ── zero-leak output guard ──────────────────────────────────────────────────
+# ── training state + zero-leak output guard ─────────────────────────────────
 
-# Programmatic zero-leak guard: a local plugin shipped inside this preset
-# (relative paths resolve against the preset directory and travel with the
-# preset when it is copied). It hooks the `llm/stream` waterfall and inspects
-# the coach's model output as a whole; when answer clues (numeric values,
+# Programmatic training state and the zero-leak guard live in ONE group behind
+# an entry-local `attemptState` realm: attempt-tracker provides the service and
+# the guard consumes it with `ctx.get`, and neither leaks into the root realm
+# (which `dsh-agent-presets` would reject at mount). The compaction group below
+# is the same pattern.
+#
+# attempt-tracker.js: registers the `attempt_update` tool (whole-list snapshot,
+# latest write wins), renders the attempt table + validated flag into the
+# system prompt every step, and rebuilds state by folding the session log's
+# `tool/call` records after a resume. The "validated" flag is now PROGRAM
+# state: the model flips it only through an explicit, auditable tool call.
+#
+# zero-leak-guard.js: hooks the `llm/stream` waterfall (which is dispatched
+# GLOBALLY, so the system-prompt signature check stays) and inspects the
+# coach's model output as a whole; when answer clues (numeric values,
 # intervals, right/wrong judgments) are detected, the entire reply is replaced
 # with an interception message — not a single character of the model's original
-# output reaches the trainee. This is hard programmatic enforcement on top of
-# the prompt constraints. The plugin only consumes events and publishes no
-# service, so it needs no realm; it activates only for requests whose system
-# prompt carries coaching signatures, and every other session passes through
-# untouched.
-- id: zero-leak-guard
-  name: './zero-leak-guard.js'
+# output reaches the trainee. Once attemptState reports a validated attempt
+# for the session, the guard stands down so the final synthesis can deliver
+# the complete solution; a missing service or unknown session falls through to
+# blocking (fail-closed).
+- id: training-state
+  name: cordis:group
+  group: true
+  isolate:
+    attemptState: true
+  config:
+    - id: attempt-tracker
+      name: './attempt-tracker.js'
+
+    - id: zero-leak-guard
+      name: './zero-leak-guard.js'
 
 # ── goals ───────────────────────────────────────────────────────────────────
 

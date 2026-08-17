@@ -8,8 +8,8 @@ Rather than solving problems for the trainee, it provides rapid feedback to help
 
 - 🧑‍🏫 **Coach, Not Solver**: Never gives complete solutions, key steps, or final answers. Follows the trainee's reasoning, confirms correct parts, and flags issues.
 - 📋 **Pre-Session Check**: Before each training session, verifies that the problem is well-defined, conditions are sufficient, and there are no errors.
-- 🧠 **Attempt Tracking**: Continuously records all approaches tried by the trainee (status: in-progress / flawed / validated / incomplete). For longer sessions, attempts can be persisted to `notes/attempts.md`.
-- 🚦 **Summary Discipline**: Only interim summaries are allowed before an approach is fully validated; a final summary is permitted only after successful completion.
+- 🧠 **Programmatic Attempt Tracking**: Approaches tried by the trainee are recorded as program state via the `attempt_update` tool (status: in-progress / flawed / validated / incomplete), rendered into the system prompt every step, and rebuilt from the session log after a resume. For longer sessions, attempts can additionally be persisted to `notes/attempts.md`.
+- 🚦 **Summary Discipline**: Only interim summaries are allowed before an approach is fully validated; the final summary is unlocked programmatically — the zero-leak guard stands down only once an attempt is recorded as `validated` through `attempt_update`, never on the model's own say-so.
 - 📚 **Final Synthesis**: The final review revisits every approach explored during the session, identifies the trainee's own reasoning patterns, and avoids dismissing "flawed" paths outright.
 - 🔒 **Programmatic Zero-Leak Guard** (core highlight): A stream-level guard on `llm/stream` that inspects the coach's entire reply. When answer clues (numerical values, intervals, correctness judgments, answer forms) are detected, the **entire response is replaced** — not a single character of the model's original output reaches the trainee. This does not rely on the model's "self-discipline."
 - 🗂️ **Extensible Knowledge Base Interface**: A reserved local/online knowledge-base integration (`knowledge-base` skill). During final synthesis, understandings backed by facts and data are prioritized.
@@ -20,8 +20,9 @@ Rather than solving problems for the trainee, it provides rapid feedback to help
 math-coach/
 ├── preset.yml              # Preset metadata (name / description)
 ├── agent.cordis.yml        # Cordis composition: tools, persona, skills, guard registration
+├── attempt-tracker.js      # Training-state plugin: attempt_update tool, prompt injection, validated flag (folds from the session log)
 ├── zero-leak-guard.js      # Programmatic zero-leak output guard plugin (loaded via relative path; copied with the preset)
-├── zero-leak-guard.test.mjs # Guard test corpus: leak samples that must block, clean replies that must pass
+├── zero-leak-guard.test.mjs # Test corpus: leak samples that must block, clean replies that must pass, tracker + unlock behavior
 ├── README.md               # This file
 ├── LICENSE                 # MIT License
 └── skills/
@@ -61,9 +62,10 @@ agentPresets.standingKeyFor('math-coach')  # → mounted OK
 
 ## How the Zero-Leak Guard Works
 
-- Hooked into the `llm/stream` waterfall; **only activates for requests whose system prompt contains coaching signatures** (zero-leak iron rules / math coach). All other sessions pass through untouched.
+- Hooked into the `llm/stream` waterfall (dispatched process-wide); **only activates for requests whose system prompt contains coaching signatures** (zero-leak iron rules / math coach). All other sessions pass through untouched.
 - The model's full output text is inspected programmatically before delivery. If answer-clue patterns (intervals, correctness judgments, answer forms, decimal values, etc.) match, the **entire segment is replaced** with a fixed interception message.
 - Interception happens at the stream layer: session logs record the interception message, not the leaked text. On the next turn, the model sees its own interception notice and automatically reformulates in compliance.
+- **The unlock is program state, not model judgment**: the `attempt-tracker` plugin (mounted in the same isolate realm) holds the per-session attempt list. Once an attempt is recorded as `validated` via the `attempt_update` tool, the guard stands down so the final synthesis can deliver the complete solution. A missing tracker, an unknown session, or no validated attempt all fall through to blocking — fail-closed in every direction.
 - Pattern definitions are centralized in `LEAK_PATTERNS` at the top of `zero-leak-guard.js` and can be extended freely.
 
 ### Known Boundaries
@@ -83,7 +85,7 @@ The guard ships with a zero-dependency test corpus (Node's built-in test runner)
 node --test zero-leak-guard.test.mjs
 ```
 
-Run it after every change to `LEAK_PATTERNS`. The corpus has two halves: leak samples that must be blocked, and legitimate coaching replies that must pass — add every newly discovered leak variant to the former and every reported false positive to the latter.
+Run it after every change to `LEAK_PATTERNS`, `attempt-tracker.js`, or the guard's unlock logic. The corpus covers: leak samples that must be blocked, legitimate coaching replies that must pass, the validated-session unlock (and its fail-closed fallbacks), and the attempt tracker's state recording, prompt rendering, and session-log fold. Add every newly discovered leak variant to the block list and every reported false positive to the pass list.
 
 ## Knowledge Base Integration (Reserved)
 
