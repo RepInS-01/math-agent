@@ -1,3 +1,8 @@
+---
+name: knowledge-base
+description: Extensible knowledge-base integration interface for Math Coach (reserved, not yet wired in) — unified search contract for consolidating mastered ideas and retrieving similar problems.
+---
+
 # Knowledge Base Interface
 
 This skill defines an **extensible** knowledge-base integration interface for: consolidating mastered ideas, retrieving similar problems, and retrieving mathematical understanding backed by data or facts. It is currently a **reserved interface** — not actually wired in yet, but the contract is fixed so any implementation can plug in later.

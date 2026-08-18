@@ -1,3 +1,8 @@
+---
+name: coaching-protocol
+description: Workflow and red lines every Math Coach training session must follow — zero-leakage protocol, training loop, attempt tracking, and feedback language. Load before starting any training.
+---
+
 # Coaching Protocol
 
 This skill defines the workflow and red lines every Math Coach training session must follow. Load this skill before starting any training.

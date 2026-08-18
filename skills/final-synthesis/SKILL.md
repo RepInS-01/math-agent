@@ -1,3 +1,8 @@
+---
+name: final-synthesis
+description: Final synthesis stage of a Math Coach session — trigger conditions (programmatic validated state), execution flow, and output structure. Enter only when at least one approach was validated.
+---
+
 # Final Synthesis
 
 Enter the final synthesis stage only when **at least one approach was validated** during training. This skill defines the execution flow and output structure.
