@@ -165,28 +165,49 @@ export default {
         return
       }
       const inner = next()
-      const deltas = []
+      const chunks = []
       let text = ''
-      const rest = []
       for await (const chunk of inner) {
-        if (chunk.type === 'text-delta') {
-          deltas.push(chunk)
-          text += chunk.text
-        } else {
-          rest.push(chunk)
-        }
+        chunks.push(chunk)
+        if (chunk.type === 'text-delta') text += chunk.text
       }
-      if (checkLeak(text)) {
-        // Replace the whole reply: not a single character of the model's original output reaches the trainee
-        yield { type: 'text-delta', index: 0, text: BLOCKED_TEXT }
-        yield { type: 'block-end', index: 0, block: { type: 'text', text: BLOCKED_TEXT } }
-        for (const chunk of rest) {
-          if (chunk.type === 'usage' || chunk.type === 'finish') yield chunk
-        }
+      if (!checkLeak(text)) {
+        // Clean reply: replay verbatim in ORIGINAL order. Reordering chunks
+        // (e.g. text-deltas first) desyncs the persisted assistant message
+        // from the finish chunk's replayState, and pi-ai's strict positional
+        // check then rejects the poisoned history on the NEXT turn
+        // (INVALID_REPLAY_STATE) — one reordered step breaks every later turn.
+        for (const c of chunks) yield c
         return
       }
-      for (const d of deltas) yield d
-      for (const c of rest) yield c
+      // Blocked: replace the text block's content IN PLACE, keeping the
+      // original block order (reasoning before text) so the persisted message
+      // stays consistent with replayState. Both the deltas and the block-end
+      // payload must be rewritten — BlockAssembler prefers the block-end
+      // payload, so leaving it intact would persist the leaked text.
+      // Reasoning content is redacted (deltas dropped, block-end payload
+      // emptied): a blocked reply's reasoning typically contains the very
+      // answer clues being intercepted.
+      let replaced = false
+      for (const c of chunks) {
+        if (c.type === 'reasoning-delta') continue
+        if (c.type === 'text-delta') {
+          if (!replaced) {
+            yield { ...c, text: BLOCKED_TEXT }
+            replaced = true
+          }
+          continue
+        }
+        if (c.type === 'block-end' && c.block?.type === 'text') {
+          yield { ...c, block: { ...c.block, text: BLOCKED_TEXT } }
+          continue
+        }
+        if (c.type === 'block-end' && c.block?.type === 'reasoning') {
+          yield { ...c, block: { ...c.block, text: '' } }
+          continue
+        }
+        yield c
+      }
     })
   },
 }

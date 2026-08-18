@@ -99,10 +99,42 @@ const CLEAN_SAMPLES = [
 // ── guard harness ───────────────────────────────────────────────────────────
 
 async function* fakeInnerStream(deltas, extras = []) {
-  for (const text of deltas) yield { type: 'text-delta', index: 0, text }
+  yield { type: 'block-start', index: 0, blockType: 'text' }
+  let full = ''
+  for (const text of deltas) {
+    full += text
+    yield { type: 'text-delta', index: 0, text }
+  }
+  yield { type: 'block-end', index: 0, block: { type: 'text', text: full } }
   for (const c of extras) yield c
   yield { type: 'usage', inputTokens: 1, outputTokens: 1 }
   yield { type: 'finish', reason: 'stop' }
+}
+
+// A pi-ai-shaped stream: reasoning block first, then the text block, and a
+// finish chunk carrying replayState in the SAME block order. The persisted
+// assistant message must match replayState positionally or the next turn is
+// rejected with INVALID_REPLAY_STATE.
+function piAiStream(replyText, { reasoningText = 'thinking about the structure' } = {}) {
+  return [
+    { type: 'block-start', index: 0, blockType: 'reasoning' },
+    { type: 'reasoning-delta', index: 0, text: reasoningText },
+    { type: 'block-end', index: 0, block: { type: 'reasoning', text: reasoningText } },
+    { type: 'block-start', index: 1, blockType: 'text' },
+    { type: 'text-delta', index: 1, text: replyText },
+    { type: 'block-end', index: 1, block: { type: 'text', text: replyText } },
+    { type: 'usage', inputTokens: 1, outputTokens: 1 },
+    { type: 'finish', reason: 'stop', replayState: { blocks: [{ type: 'reasoning' }, { type: 'text' }] } },
+  ]
+}
+
+async function runGuardOver(system, stream) {
+  const handler = applyGuard()
+  const out = []
+  for await (const chunk of handler({ system, sessionId: SESSION }, async function* () { yield* stream })) {
+    out.push(chunk)
+  }
+  return out
 }
 
 /**
@@ -180,6 +212,40 @@ test('on pass: reasoning chunks are forwarded normally', async () => {
   const reasoning = { type: 'reasoning-delta', text: 'checking the argument structure' }
   const out = await runGuard(COACHING_SYSTEM, ['这一步正确。'], [reasoning])
   assert.ok(out.includes(reasoning), 'reasoning chunk must pass through')
+})
+
+test('pass path replays chunks verbatim in original order (pi-ai replay consistency)', async () => {
+  const stream = piAiStream('这一步正确，请继续。')
+  const out = await runGuardOver(COACHING_SYSTEM, stream)
+  assert.deepEqual(out, stream, 'clean reply must be replayed chunk-for-chunk, reordering poisons pi-ai replay state')
+})
+
+test('on block: text replaced in place, block order and replayState stay consistent', async () => {
+  const stream = piAiStream('答案是 2。', { reasoningText: 'the answer is 2' })
+  const out = await runGuardOver(COACHING_SYSTEM, stream)
+
+  // Same block sequence as the original stream: reasoning first, then text
+  assert.deepEqual(
+    out.map((c) => c.type),
+    ['block-start', 'block-end', 'block-start', 'text-delta', 'block-end', 'usage', 'finish'],
+  )
+  assert.deepEqual(
+    out.filter((c) => c.type === 'block-start').map((c) => c.blockType),
+    ['reasoning', 'text'],
+    'reasoning block must stay ahead of the text block',
+  )
+
+  // The leaked text survives nowhere: not in deltas, not in block-end payloads
+  const textEnd = out.find((c) => c.type === 'block-end' && c.index === 1)
+  assert.ok(textEnd.block.text.includes('[Zero-Leak Guard]'), 'block-end payload must carry the interception text')
+  const reasoningEnd = out.find((c) => c.type === 'block-end' && c.index === 0)
+  assert.equal(reasoningEnd.block.text, '', 'reasoning payload must be redacted')
+  assert.ok(!out.some((c) => c.type === 'reasoning-delta'), 'reasoning deltas must be dropped')
+  assert.ok(!out.some((c) => JSON.stringify(c).includes('答案是 2')), 'no chunk may carry the leaked text')
+
+  // finish (with replayState) is forwarded untouched
+  const finish = out.find((c) => c.type === 'finish')
+  assert.equal(finish.replayState.blocks.length, 2, 'replayState must survive untouched')
 })
 
 test('validated session: guard stands down, answer-bearing synthesis passes', async () => {
