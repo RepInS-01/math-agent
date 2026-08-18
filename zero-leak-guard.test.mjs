@@ -11,7 +11,9 @@
  * Two corpus groups for the guard:
  *  - LEAK_SAMPLES: replies that MUST be blocked while no attempt is validated
  *    (add every newly discovered leak variant here together with its
- *    LEAK_PATTERNS entry).
+ *    LEAK_PATTERNS entry). Includes evasion spellings (full-width digits,
+ *    LaTeX inline math, Chinese numerals) that the guard's match-time
+ *    normalization collapses to canonical form.
  *  - CLEAN_SAMPLES: legitimate coaching replies that MUST pass (add every
  *    reported false positive here).
  *
@@ -61,6 +63,16 @@ const LEAK_SAMPLES = [
   // value + 左右/附近/上下
   '在 2 附近找找。',
   '正确答案是 e。',
+  // ── evasion spellings: match-time normalization collapses these ──
+  '答案约等于１.６１８。', // full-width digits → 1.618
+  '答案在 １.６ 到 １.７ 之间。', // full-width interval
+  '极限是 $\\frac{3}{2}$。', // LaTeX fraction → 3/2
+  'The answer is \\frac{1+\\sqrt{5}}{2}.', // nested LaTeX → 1+√(5)/2
+  '它等于 \\sqrt{2}，不信你代入验证。', // LaTeX sqrt → √(2)
+  '结果大约是 一点六一八。', // Chinese decimal → 1.618
+  '答案是二分之三。', // Chinese fraction → 3/2
+  '它约等于百分之七十五。', // → 75%
+  '在 根号2 附近找找。', // 根号 → √
 ]
 
 const CLEAN_SAMPLES = [
@@ -76,6 +88,12 @@ const CLEAN_SAMPLES = [
   'Your approach is the right one; now justify each step.',
   "Let's not judge that number — tell me how you derived it.",
   'Substitute L into your equation and check both sides yourself.',
+  // ── normalization false-positive guards ──
+  '三三两两地试几组，结构上没有新信息。', // digit-word prose must stay text
+  '这一步十分关键，但还差一个依据。', // lone 十 / 一 are not numbers
+  '方法二和方法三都值得一试，先试一个。', // ordinals stay text
+  '讨论 1/2 这种分数形式本身没有问题。', // bare fraction without answer phrasing
+  'Try \\int x^2 dx on your own first, then show me the setup.', // TeX commands degrade, delivery stays verbatim
 ]
 
 // ── guard harness ───────────────────────────────────────────────────────────
