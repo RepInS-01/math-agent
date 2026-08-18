@@ -17,7 +17,7 @@ Rather than solving problems for the trainee, it provides rapid feedback to help
 ## Directory Structure
 
 ```
-math-coach/
+math-agent/
 ├── preset.yml              # Preset metadata (name / description)
 ├── agent.cordis.yml        # Cordis composition: tools, persona, skills, guard registration
 ├── attempt-tracker.js      # Training-state plugin: attempt_update tool, prompt injection, validated flag (folds from the session log)
@@ -33,27 +33,21 @@ math-coach/
 
 ## Installation
 
-Prerequisite: [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) installed. This preset is derived from the `standard` preset and uses the DSH agent-presets mechanism.
+Prerequisite: [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`npx @deepseek-ai/dsh web`). This preset is derived from the `standard` preset and uses the DSH agent-presets mechanism.
 
 ```bash
-# Option 1: Copy directly into the user presets root
+git clone https://github.com/RepInS-01/math-agent.git
 mkdir -p ~/.dsh/.agent-presets
-cp -r math-coach ~/.dsh/.agent-presets/
-
-# Option 2: Inside a DSH session (recommended; auto-loads and validates)
-# Use agentPresets.copy, or place this directory under
-# ${DSH_HOME:-$HOME/.dsh}/.agent-presets/ and restart DSH.
+cp -r math-agent ~/.dsh/.agent-presets/
 ```
 
-Mount validation (run after any modification):
+The preset id is the directory name, so the preset must land as `~/.dsh/.agent-presets/math-agent/` (or `${DSH_HOME}/.agent-presets/math-agent/` if you run with a custom `DSH_HOME`). Discovery is live: the preset appears in the Web GUI immediately, no DSH restart needed.
 
-```
-agentPresets.standingKeyFor('math-coach')  # → mounted OK
-```
+Mount validation (run after any modification): in the Web GUI, create a new session and select the **Math_Agent** preset. A successful selection means the composition mounted; on a mount failure the GUI reverts the selection to the default preset and shows the error. (Programmatically, the same check is `agentPresets.standingKeyFor('math-agent')`, callable from inside a DSH session.)
 
 ## Usage
 
-1. In the DeepSeek Harness Web GUI, create a new session and select the **Math_Agent** preset (id: `math-coach`).
+1. In the DeepSeek Harness Web GUI, create a new session and select the **Math_Agent** preset (id: `math-agent`).
 2. Start a training session with a prompt like:
 
    > I'd like to start a math training exercise. Problem: Let aₙ = √(1 + aₙ₋₁), a₀ = 1. Prove that {aₙ} converges and find its limit. I'm thinking of using monotone convergence but I'm not sure how to prove boundedness.
@@ -99,7 +93,7 @@ Run it after every change to `LEAK_PATTERNS`, `attempt-tracker.js`, or the guard
 
 - Modify persona / coaching protocol: edit the `persona` section in `agent.cordis.yml` and `skills/coaching-protocol/SKILL.md`.
 - Modify guard patterns: edit `LEAK_PATTERNS` in `zero-leak-guard.js`.
-- Always re-run `standingKeyFor('math-coach')` after changes.
+- Always re-check the mount after changes: re-select the preset in the Web GUI (a failed mount reverts the selection to the default), or call `agentPresets.standingKeyFor('math-agent')` from a DSH session.
 
 ## Acknowledgments
 
