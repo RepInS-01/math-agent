@@ -9,3 +9,6 @@ Thumbs.db
 # Logs and temp files
 *.log
 *.tmp
+
+# Locally cloned third-party repos kept inside this directory for reference
+dsh-routing-suite/
