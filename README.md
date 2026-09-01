@@ -60,14 +60,16 @@ Mount validation (run after any modification): in the Web GUI, create a new sess
 - The model's full output text is inspected programmatically before delivery. If answer-clue patterns (intervals, correctness judgments, answer forms, decimal values, etc.) match, the **entire segment is replaced** with a fixed interception message.
 - Interception happens at the stream layer: session logs record the interception message, not the leaked text. On the next turn, the model sees its own interception notice and automatically reformulates in compliance.
 - **The unlock is program state, not model judgment**: the `attempt-tracker` plugin (mounted in the same isolate realm) holds the per-session attempt list. Once an attempt is recorded as `validated` via the `attempt_update` tool, the guard stands down so the final synthesis can deliver the complete solution. A missing tracker, an unknown session, or no validated attempt all fall through to blocking — fail-closed in every direction.
+- **The unlock is program state, not model judgment**: the `attempt-tracker` plugin (mounted in the same isolate realm) holds the per-session attempt list. Once an attempt is recorded as `validated` via the `attempt_update` tool, the guard stands down so the final synthesis can deliver the complete solution. A missing tracker, an unknown session, or no validated attempt all fall through to blocking — fail-closed in every direction.
+- **Compute/search tools are denied under the same lock**: a preset-layer `tools.guard` rejects `bash`, `pwsh`, `web_search`, and `run_code` until an attempt is validated. The stream inspection cannot see tool output, so the tools that could compute or retrieve the answer are disabled outright — and the denial lifts on the same program state as the final-synthesis unlock.
+- **Reasoning is hidden during the locked phase**: the coach's thinking routinely derives the answer outright, and the client UI renders reasoning rows to the trainee. While no attempt is validated, reasoning deltas collapse to a fixed placeholder and reasoning block payloads are rewritten — in original block order, keeping the persisted message consistent with pi-ai replay state. Reasoning flows again once an approach is validated.
 - Pattern definitions are centralized in `LEAK_PATTERNS` at the top of `zero-leak-guard.js` and can be extended freely.
 
 ### Known Boundaries
 
-The programmatic guard blocks **enumerable leak forms** (numeric values, intervals, judgment words) in the coach's own reply text. Two channels remain persona-constrained rather than guard-enforced:
+The programmatic guard blocks **enumerable leak forms** (numeric values, intervals, judgment words) in the coach's own reply text, and the tool gate covers the compute/search channels. One channel remains persona-constrained rather than guard-enforced:
 
 - **Semantic-level** hints without numbers (e.g., "this number happens to be the root of the equation you just derived").
-- **Tool results**: the guard does not scan tool output, so the persona iron rules forbid the coach from running code/shell or web searches to compute, approximate, or verify the answer for the trainee.
 
 When new variants are discovered, simply add them to `LEAK_PATTERNS` (plus a sample in `zero-leak-guard.test.mjs`).
 

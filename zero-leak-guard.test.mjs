@@ -128,8 +128,8 @@ function piAiStream(replyText, { reasoningText = 'thinking about the structure' 
   ]
 }
 
-async function runGuardOver(system, stream) {
-  const handler = applyGuard()
+async function runGuardOver(system, stream, { services = {} } = {}) {
+  const { handler } = applyGuard(services)
   const out = []
   for await (const chunk of handler({ system, sessionId: SESSION }, async function* () { yield* stream })) {
     out.push(chunk)
@@ -140,20 +140,25 @@ async function runGuardOver(system, stream) {
 /**
  * @param {object} [services] - map of cordis service name -> value; the fake
  *   ctx.get() returns from it (undefined when absent, like a missing plugin).
+ * @returns {{ handler: Function, toolGuard: Function }} the llm/stream handler
+ *   and the captured tools.guard callback.
  */
 function applyGuard(services = {}) {
   const handlers = {}
+  let toolGuard
   const ctx = {
     on: (event, fn) => { handlers[event] = fn },
     get: (name) => services[name],
+    tools: { guard: (g) => { toolGuard = g } },
   }
   guard.apply(ctx)
   assert.ok(handlers['llm/stream'], 'guard must hook llm/stream')
-  return handlers['llm/stream']
+  assert.ok(toolGuard, 'guard must register a tools.guard')
+  return { handler: handlers['llm/stream'], toolGuard }
 }
 
 async function runGuard(system, deltas, extras = [], { services = {}, sessionId = SESSION } = {}) {
-  const handler = applyGuard(services)
+  const { handler } = applyGuard(services)
   const out = []
   for await (const chunk of handler({ system, sessionId }, () => fakeInnerStream(deltas, extras))) {
     out.push(chunk)
@@ -198,26 +203,61 @@ test('streaming order is preserved for clean multi-delta replies', async () => {
   assert.deepEqual(deltas.map((d) => d.text), parts)
 })
 
-test('on block: usage/finish are forwarded, reasoning chunks are dropped', async () => {
+test('on block: usage/finish are forwarded, reasoning content is redacted', async () => {
   const out = await runGuard(COACHING_SYSTEM, ['答案是 2。'], [
     { type: 'reasoning-delta', text: 'the answer is 2' },
   ])
   assert.ok(out.some((c) => c.type === 'usage'), 'usage must be forwarded')
   assert.ok(out.some((c) => c.type === 'finish'), 'finish must be forwarded')
-  assert.ok(!out.some((c) => c.type === 'reasoning-delta'), 'reasoning must not leak')
+  assert.ok(!JSON.stringify(out).includes('the answer is 2'), 'reasoning must not leak')
   assert.ok(out.some((c) => c.type === 'block-end'), 'block-end must close the text block')
 })
 
-test('on pass: reasoning chunks are forwarded normally', async () => {
-  const reasoning = { type: 'reasoning-delta', text: 'checking the argument structure' }
+test('on pass: reasoning deltas collapse to a placeholder, never forwarded', async () => {
+  const reasoning = { type: 'reasoning-delta', index: 1, text: 'the answer is 2' }
   const out = await runGuard(COACHING_SYSTEM, ['这一步正确。'], [reasoning])
-  assert.ok(out.includes(reasoning), 'reasoning chunk must pass through')
+  const deltas = out.filter((c) => c.type === 'reasoning-delta')
+  assert.equal(deltas.length, 1, 'reasoning deltas collapse to a single placeholder')
+  assert.match(deltas[0].text, /Reasoning hidden/)
+  assert.ok(!JSON.stringify(out).includes('the answer is 2'), 'reasoning content must not survive on pass either')
 })
 
 test('pass path replays chunks verbatim in original order (pi-ai replay consistency)', async () => {
-  const stream = piAiStream('这一步正确，请继续。')
+  const stream = [
+    { type: 'block-start', index: 0, blockType: 'text' },
+    { type: 'text-delta', index: 0, text: '这一步正确，请继续。' },
+    { type: 'block-end', index: 0, block: { type: 'text', text: '这一步正确，请继续。' } },
+    { type: 'usage', inputTokens: 1, outputTokens: 1 },
+    { type: 'finish', reason: 'stop', replayState: { blocks: [{ type: 'text' }] } },
+  ]
   const out = await runGuardOver(COACHING_SYSTEM, stream)
-  assert.deepEqual(out, stream, 'clean reply must be replayed chunk-for-chunk, reordering poisons pi-ai replay state')
+  assert.deepEqual(out, stream, 'clean text-only reply must be replayed chunk-for-chunk, reordering poisons pi-ai replay state')
+})
+
+test('reasoning is redacted on PASS too, block order and replayState stay consistent', async () => {
+  const stream = piAiStream('这一步正确，请继续。', { reasoningText: 'the answer is 1.618' })
+  const out = await runGuardOver(COACHING_SYSTEM, stream)
+
+  // Same block sequence as the original stream: reasoning first, then text
+  assert.deepEqual(
+    out.map((c) => c.type),
+    ['block-start', 'reasoning-delta', 'block-end', 'block-start', 'text-delta', 'block-end', 'usage', 'finish'],
+  )
+  // The answer survives nowhere: deltas collapse to one placeholder, block-end
+  // payload rewritten, while the clean text block passes untouched
+  assert.ok(!out.some((c) => JSON.stringify(c).includes('1.618')), 'reasoning content must not survive')
+  assert.match(out.find((c) => c.type === 'reasoning-delta').text, /Reasoning hidden/)
+  assert.match(out.find((c) => c.type === 'block-end' && c.index === 0).block.text, /Reasoning hidden/)
+  assert.equal(out.find((c) => c.type === 'text-delta').text, '这一步正确，请继续。')
+  assert.equal(out.find((c) => c.type === 'finish').replayState.blocks.length, 2, 'replayState must survive untouched')
+})
+
+test('validated session: reasoning flows through untouched', async () => {
+  const stream = piAiStream('完整解答：极限是 2。', { reasoningText: 'full derivation ending in 2' })
+  const out = await runGuardOver(COACHING_SYSTEM, stream, {
+    services: { attemptState: attemptStateStub(new Set([SESSION])) },
+  })
+  assert.deepEqual(out, stream, 'validated session stands down entirely, reasoning included')
 })
 
 test('on block: text replaced in place, block order and replayState stay consistent', async () => {
@@ -227,7 +267,7 @@ test('on block: text replaced in place, block order and replayState stay consist
   // Same block sequence as the original stream: reasoning first, then text
   assert.deepEqual(
     out.map((c) => c.type),
-    ['block-start', 'block-end', 'block-start', 'text-delta', 'block-end', 'usage', 'finish'],
+    ['block-start', 'reasoning-delta', 'block-end', 'block-start', 'text-delta', 'block-end', 'usage', 'finish'],
   )
   assert.deepEqual(
     out.filter((c) => c.type === 'block-start').map((c) => c.blockType),
@@ -239,8 +279,10 @@ test('on block: text replaced in place, block order and replayState stay consist
   const textEnd = out.find((c) => c.type === 'block-end' && c.index === 1)
   assert.ok(textEnd.block.text.includes('[Zero-Leak Guard]'), 'block-end payload must carry the interception text')
   const reasoningEnd = out.find((c) => c.type === 'block-end' && c.index === 0)
-  assert.equal(reasoningEnd.block.text, '', 'reasoning payload must be redacted')
-  assert.ok(!out.some((c) => c.type === 'reasoning-delta'), 'reasoning deltas must be dropped')
+  assert.match(reasoningEnd.block.text, /Reasoning hidden/, 'reasoning payload must be redacted')
+  const reasoningDelta = out.find((c) => c.type === 'reasoning-delta')
+  assert.match(reasoningDelta.text, /Reasoning hidden/, 'reasoning deltas collapse to the placeholder')
+  assert.ok(!out.some((c) => JSON.stringify(c).includes('the answer is 2')), 'no chunk may carry the reasoning text')
   assert.ok(!out.some((c) => JSON.stringify(c).includes('答案是 2')), 'no chunk may carry the leaked text')
 
   // finish (with replayState) is forwarded untouched
@@ -265,6 +307,36 @@ test('validated flag is per-session: other sessions stay blocked', async () => {
 test('missing attemptState service fails closed (keeps blocking)', async () => {
   const out = await runGuard(COACHING_SYSTEM, ['答案是 2。'], [], { services: {} })
   assert.ok(textOf(out).includes('[Zero-Leak Guard]'), 'no tracker service → must still block')
+})
+
+// ── compute/search tool gate ────────────────────────────────────────────────
+
+const toolExec = (name, sessionId) => ({ name, agent: sessionId ? { session: { id: sessionId } } : undefined })
+
+test('tool gate denies compute/search tools before validation', () => {
+  const { toolGuard } = applyGuard()
+  for (const name of ['bash', 'pwsh', 'web_search', 'run_code']) {
+    assert.match(toolGuard(toolExec(name, SESSION)), /disabled during training/, `${name} must be denied`)
+  }
+})
+
+test('tool gate leaves non-compute tools alone', () => {
+  const { toolGuard } = applyGuard()
+  for (const name of ['write', 'read', 'glob', 'grep', 'todo_write', 'attempt_update', 'skill']) {
+    assert.equal(toolGuard(toolExec(name, SESSION)), undefined, `${name} must stay allowed`)
+  }
+})
+
+test('tool gate unlocks on the same validated state as the stream guard', () => {
+  const { toolGuard } = applyGuard({ attemptState: attemptStateStub(new Set([SESSION])) })
+  assert.equal(toolGuard(toolExec('bash', SESSION)), undefined, 'validated session unlocks tools')
+  assert.match(toolGuard(toolExec('bash', 'other-session')), /disabled/, 'other sessions stay denied')
+})
+
+test('tool gate fails closed: missing agent or tracker service denies', () => {
+  const { toolGuard } = applyGuard()
+  assert.match(toolGuard(toolExec('bash', undefined)), /disabled/, 'missing agent → deny')
+  assert.match(toolGuard(toolExec('bash', SESSION)), /disabled/, 'missing tracker service → deny')
 })
 
 // ── attempt-tracker harness ─────────────────────────────────────────────────

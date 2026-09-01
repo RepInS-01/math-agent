@@ -13,6 +13,12 @@
  * - Interception happens at the stream layer: session logs record the
  *   interception message, not the leaked text. On the next turn, the model
  *   sees its own interception notice and automatically reformulates.
+ * - Reasoning is redacted for the ENTIRE locked phase, pass or block: the
+ *   coach's thinking routinely derives the answer outright, and the client UI
+ *   renders reasoning rows to the trainee. Reasoning deltas collapse to a
+ *   fixed placeholder and reasoning block-end payloads are rewritten, in
+ *   original block order (pi-ai replay consistency). Reasoning flows again
+ *   once an attempt is validated.
  * - Leak patterns cover both Chinese and English coaching replies, because the
  *   persona replies in the trainee's language (Chinese trainees get Chinese
  *   coaching, so Chinese leak wording must also be caught).
@@ -25,11 +31,18 @@
  *   plugin (same isolate realm, service `attemptState`) records a validated
  *   attempt for the session, this guard stands down so the coach can deliver
  *   the complete solution. Until then every coaching reply is scanned.
+ * - Compute/search tools (`bash`, `pwsh`, `web_search`, `run_code`) are denied
+ *   via a preset-layer `tools.guard` under the same lock: a tool result leaks
+ *   the answer just as surely as the coach's own wording, and the stream
+ *   inspection above cannot see tool output. The lock lifts on the same
+ *   validated-attempt state that unlocks the final synthesis.
  * - This file ships inside the preset directory and loads via a relative path;
  *   no npm package required.
  */
 export default {
   name: 'zero-leak-guard',
+
+  inject: ['tools'],
 
   apply(ctx) {
     // ── match-time normalization ─────────────────────────────────────────
@@ -139,6 +152,11 @@ export default {
 
     const BLOCKED_TEXT = '[Zero-Leak Guard] This reply contained answer clues (numeric value / interval / right-wrong judgment) and was blocked by the training principle — nothing was delivered. Please rephrase and discuss only the trainee\'s argument structure, without judging any value.'
 
+    // Replaces every reasoning block while the session is locked: the coach's
+    // thinking routinely derives the answer outright, and reasoning rows are
+    // rendered to the trainee.
+    const REASONING_PLACEHOLDER = '[Zero-Leak Guard] Reasoning hidden during training — the coach\'s thinking would reveal the answer. It becomes visible once an approach is validated.'
+
     function checkLeak(text) {
       const normalized = normalizeForMatch(text)
       for (const re of LEAK_PATTERNS) {
@@ -146,6 +164,23 @@ export default {
       }
       return false
     }
+
+    // ── compute/search tool gate ─────────────────────────────────────────
+    // The stream inspection above cannot see tool output, so the tools that
+    // can COMPUTE or RETRIEVE the answer are denied outright until the same
+    // program state that unlocks the final synthesis (a validated attempt)
+    // lifts the lock. Registered from the preset's standing-mount context, the
+    // guard lives in the preset layer and applies only to this preset's agents
+    // (subagents join the same chain). Fail-closed: missing tracker service or
+    // missing session both deny.
+    const COMPUTE_TOOLS = new Set(['bash', 'pwsh', 'web_search', 'run_code'])
+    ctx.tools.guard((exec) => {
+      if (!COMPUTE_TOOLS.has(exec.name)) return undefined
+      const tracker = ctx.get('attemptState')
+      const sessionId = exec.agent?.session?.id
+      if (tracker && sessionId && tracker.isValidated(sessionId)) return undefined
+      return '[Zero-Leak Guard] Compute and search tools are disabled during training — a tool result would leak the answer just as surely as wording. Verify by hand; these tools unlock once an approach is validated.'
+    })
 
     ctx.on('llm/stream', async function* (options, next) {
       const system = options.system || ''
@@ -171,39 +206,42 @@ export default {
         chunks.push(chunk)
         if (chunk.type === 'text-delta') text += chunk.text
       }
-      if (!checkLeak(text)) {
-        // Clean reply: replay verbatim in ORIGINAL order. Reordering chunks
-        // (e.g. text-deltas first) desyncs the persisted assistant message
-        // from the finish chunk's replayState, and pi-ai's strict positional
-        // check then rejects the poisoned history on the NEXT turn
-        // (INVALID_REPLAY_STATE) — one reordered step breaks every later turn.
-        for (const c of chunks) yield c
-        return
-      }
-      // Blocked: replace the text block's content IN PLACE, keeping the
-      // original block order (reasoning before text) so the persisted message
-      // stays consistent with replayState. Both the deltas and the block-end
-      // payload must be rewritten — BlockAssembler prefers the block-end
-      // payload, so leaving it intact would persist the leaked text.
-      // Reasoning content is redacted (deltas dropped, block-end payload
-      // emptied): a blocked reply's reasoning typically contains the very
-      // answer clues being intercepted.
+      const blocked = checkLeak(text)
+      // One ordered pass for both outcomes — chunk order is NEVER changed:
+      // reordering desyncs the persisted assistant message from the finish
+      // chunk's replayState, and pi-ai's strict positional check then rejects
+      // the poisoned history on the NEXT turn (INVALID_REPLAY_STATE).
+      //
+      // - Reasoning is redacted for the whole locked phase, pass or block: the
+      //   coach's thinking routinely derives the answer outright and the UI
+      //   renders reasoning rows to the trainee. Deltas collapse to one
+      //   placeholder per block; block-end payloads are rewritten too, because
+      //   BlockAssembler prefers the block-end payload for the persisted block.
+      // - On block, the text block's content is replaced IN PLACE the same way
+      //   (first delta + block-end payload), keeping the original block order.
       let replaced = false
+      const reasoningSeen = new Set()
       for (const c of chunks) {
-        if (c.type === 'reasoning-delta') continue
-        if (c.type === 'text-delta') {
+        if (c.type === 'reasoning-delta') {
+          if (!reasoningSeen.has(c.index)) {
+            reasoningSeen.add(c.index)
+            yield { ...c, text: REASONING_PLACEHOLDER }
+          }
+          continue
+        }
+        if (c.type === 'block-end' && c.block?.type === 'reasoning') {
+          yield { ...c, block: { ...c.block, text: REASONING_PLACEHOLDER } }
+          continue
+        }
+        if (blocked && c.type === 'text-delta') {
           if (!replaced) {
             yield { ...c, text: BLOCKED_TEXT }
             replaced = true
           }
           continue
         }
-        if (c.type === 'block-end' && c.block?.type === 'text') {
+        if (blocked && c.type === 'block-end' && c.block?.type === 'text') {
           yield { ...c, block: { ...c.block, text: BLOCKED_TEXT } }
-          continue
-        }
-        if (c.type === 'block-end' && c.block?.type === 'reasoning') {
-          yield { ...c, block: { ...c.block, text: '' } }
           continue
         }
         yield c
