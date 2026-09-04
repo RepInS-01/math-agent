@@ -22,6 +22,11 @@
  *   prompt as a self-regulating signal. Plugin config `strictness: 'strict'`
  *   rejects L2/L3 hints programmatically (only L0 questions / L1
  *   principle-naming allowed).
+ * - Registers the `hint_policy` tool (per-session, latest write wins) so the
+ *   trainee picks the hint policy at session start (the coach asks via
+ *   ask_user_question) or switches mid-session; the yml `strictness` config
+ *   is only the DEFAULT for sessions that never chose. An unconfirmed
+ *   default is flagged in the prompt section so the coach asks first.
  * - Nudges in the prompt section after several rendered steps without an
  *   `attempt_update` call, so the record cannot quietly go stale.
  *
@@ -38,6 +43,7 @@
 
 const STATUSES = ['in-progress', 'flawed', 'validated', 'incomplete']
 const HINT_LEVELS = ['L1', 'L2', 'L3']
+const POLICIES = ['normal', 'strict']
 /** Steps (prompt renders) without attempt_update before the section nudges. */
 const STALE_NUDGE_STEPS = 3
 
@@ -109,7 +115,22 @@ function sanitizeHint(raw) {
   return { level: raw.level, summary }
 }
 
-function renderSection(attempts, { hints = [], staleSteps = 0, strictness = 'normal' } = {}) {
+/** Hint policy = per-session latest write wins; undefined = never chosen. */
+function foldPolicy(events) {
+  let policy
+  for (const event of events) {
+    if (event.type !== 'tool/call' || event.data?.name !== 'hint_policy') continue
+    try {
+      const parsed = JSON.parse(event.data.arguments)
+      if (POLICIES.includes(parsed.policy)) policy = parsed.policy
+    } catch {
+      // malformed historical record — skip it, keep folding
+    }
+  }
+  return policy
+}
+
+function renderSection(attempts, { hints = [], staleSteps = 0, policy = 'normal', policyConfirmed = true } = {}) {
   const header = '## Attempt Tracking (programmatic state)'
   let body
   if (!attempts || attempts.length === 0) {
@@ -125,10 +146,13 @@ function renderSection(attempts, { hints = [], staleSteps = 0, strictness = 'nor
   }
   const counts = HINT_LEVELS.map((l) => `${l} ×${hints.filter((h) => h.level === l).length}`).join(' · ')
   const hintLine = `Hints given this session: ${hints.length} (${counts}). Log every L1+ hint with hint_log in the same reply, before giving it; a rising count is a signal to slow down, not a quota to spend.`
+  const unconfirmed = policyConfirmed
+    ? ''
+    : ' (default, not yet confirmed — ask the trainee for the hint policy with ask_user_question before coaching, then record it with hint_policy)'
   const policyLine =
-    strictness === 'strict'
-      ? 'Hint policy: STRICT — L2/L3 hints are disabled (hint_log rejects them). Only L0 questions and L1 principle-naming are allowed.'
-      : 'Hint policy: normal — follow the hint ladder in coaching-protocol: L1+ only after the trainee says they are stuck and states what they tried; L3 only after ≥3 rounds stuck on the same step.'
+    policy === 'strict'
+      ? `Hint policy: STRICT — L2/L3 hints are disabled (hint_log rejects them). Only L0 questions and L1 principle-naming are allowed.${unconfirmed}`
+      : `Hint policy: normal — follow the hint ladder in coaching-protocol: L1+ only after the trainee says they are stuck and states what they tried; L3 only after ≥3 rounds stuck on the same step.${unconfirmed}`
   const nudge =
     staleSteps >= STALE_NUDGE_STEPS
       ? `\nReminder: ${staleSteps} steps without attempt_update — update the record now, or say in your reply why nothing changed.`
@@ -144,11 +168,13 @@ export default {
   inject: ['tools', 'systemPrompt'],
 
   apply(ctx, config) {
-    // 'strict' disables L2/L3 hints programmatically (hint_log rejects them).
-    const strictness = config?.strictness === 'strict' ? 'strict' : 'normal'
-    /** Runtime mirrors: SessionId -> sanitized attempt list / hint array. */
+    // yml `strictness` is only the DEFAULT policy for sessions that never
+    // chose one; hint_policy overrides it per session (latest write wins).
+    const defaultPolicy = config?.strictness === 'strict' ? 'strict' : 'normal'
+    /** Runtime mirrors: SessionId -> sanitized attempt list / hint array / chosen policy. */
     const states = new Map()
     const hintLogs = new Map()
+    const policies = new Map()
     /** SessionId -> prompt renders since the last attempt_update call. */
     const staleSteps = new Map()
 
@@ -174,6 +200,16 @@ export default {
         hintLogs.set(session.id, hints)
       }
       return hints
+    }
+
+    /** Effective policy: session's own choice (folded from the log) over the yml default. */
+    function policyFor(session) {
+      let chosen = policies.get(session.id)
+      if (chosen === undefined) {
+        chosen = foldPolicy(eventsOf(session))
+        if (chosen !== undefined) policies.set(session.id, chosen)
+      }
+      return { policy: chosen ?? defaultPolicy, confirmed: chosen !== undefined }
     }
 
     // IMPORTANT: ctx.tools.register() takes RAW JSON Schema (supported subset:
@@ -239,7 +275,7 @@ export default {
 
     // Append-only hint log: every L1+ hint the coach gives becomes auditable
     // program state, and the running count renders into the prompt as a
-    // self-regulating signal. Under `strictness: 'strict'` this tool is the
+    // self-regulating signal. Under a strict session policy this tool is the
     // enforcement point: L2/L3 calls are rejected outright.
     ctx.tools.register({
       name: 'hint_log',
@@ -275,12 +311,53 @@ export default {
       async execute(args, exec) {
         if (!exec.agent) throw new Error('hint_log requires an owning agent session')
         const hint = sanitizeHint(args)
-        if (strictness === 'strict' && hint.level !== 'L1') {
+        if (policyFor(exec.agent.session).policy === 'strict' && hint.level !== 'L1') {
           throw new Error(`Strict hint policy: ${hint.level} hints are disabled — only L0 questions and L1 principle-naming are allowed.`)
         }
         const hints = hintsFor(exec.agent.session)
         hints.push(hint)
         return { hints: hints.length, level: hint.level }
+      },
+    })
+
+    // Per-session hint policy: the trainee picks at session start (the coach
+    // asks via ask_user_question) or switches mid-session; latest write wins,
+    // folded back from the session log after a resume.
+    ctx.tools.register({
+      name: 'hint_policy',
+      description:
+        'Set the hint policy for THIS session: "strict" = only L0 questions and L1 principle-naming (hint_log rejects L2/L3); "normal" = the full hint ladder (L0–L3, L3 as last resort). Call it at session start after asking the trainee with ask_user_question, and whenever the trainee explicitly asks to switch. The active policy renders into your system prompt every step.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['policy'],
+        properties: {
+          policy: { type: 'string', enum: [...POLICIES], description: 'strict | normal.' },
+        },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['policy'],
+          properties: {
+            policy: { type: 'string' },
+          },
+        },
+        render: (_args, value) => [
+          {
+            type: 'text',
+            text: value.policy === 'strict'
+              ? 'Hint policy set to STRICT for this session (L0 questions + L1 principle-naming only).'
+              : 'Hint policy set to normal for this session (full hint ladder L0–L3).',
+          },
+        ],
+      },
+      async execute(args, exec) {
+        if (!exec.agent) throw new Error('hint_policy requires an owning agent session')
+        if (!POLICIES.includes(args?.policy)) throw new Error(`policy must be one of: ${POLICIES.join(' / ')}`)
+        policies.set(exec.agent.id, args.policy)
+        return { policy: args.policy }
       },
     })
 
@@ -294,10 +371,12 @@ export default {
         // record is going stale — surface a nudge in the section itself.
         const stale = staleSteps.get(session.id) ?? 0
         staleSteps.set(session.id, stale + 1)
+        const { policy, confirmed } = policyFor(session)
         return renderSection(stateFor(session), {
           hints: hintsFor(session),
           staleSteps: stale,
-          strictness,
+          policy,
+          policyConfirmed: confirmed,
         })
       },
     })

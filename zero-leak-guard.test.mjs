@@ -489,6 +489,46 @@ test('strict policy rejects L2/L3 hints programmatically', async () => {
   assert.match(text, /Hints given this session: 1/)
 })
 
+// ── hint_policy (per-session policy) ────────────────────────────────────────
+
+test('default policy is flagged unconfirmed until hint_policy is called', async () => {
+  const { tools, sections } = applyTracker({ strictness: 'strict' })
+  const session = fakeSession('s1')
+  const section = sections.get('attempts:status')
+
+  assert.match(section.text({ agent: { session } }), /\(default, not yet confirmed/)
+
+  const r = await tools.get('hint_policy').execute({ policy: 'normal' }, fakeExec(session))
+  assert.deepEqual(r, { policy: 'normal' })
+  const text = section.text({ agent: { session } })
+  assert.match(text, /Hint policy: normal/)
+  assert.doesNotMatch(text, /not yet confirmed/, 'chosen policy is no longer flagged')
+
+  // the override unlocks the full ladder for this session
+  const hint = await tools.get('hint_log').execute({ level: 'L2', summary: 'skeleton' }, fakeExec(session))
+  assert.deepEqual(hint, { hints: 1, level: 'L2' })
+})
+
+test('hint_policy rejects invalid input and agent-less calls', async () => {
+  const { tools } = applyTracker()
+  const hintPolicy = tools.get('hint_policy')
+  assert.ok(hintPolicy, 'tracker must register hint_policy')
+  await assert.rejects(hintPolicy.execute({ policy: 'hard' }, fakeExec(fakeSession('s1'))))
+  await assert.rejects(hintPolicy.execute({ policy: 'normal' }, { agent: undefined }))
+})
+
+test('hint_policy folds from the session log on resume, latest write wins', () => {
+  const { sections } = applyTracker()
+  const session = fakeSession('resumed', [
+    { type: 'tool/call', data: { name: 'hint_policy', arguments: JSON.stringify({ policy: 'normal' }) } },
+    { type: 'tool/call', data: { name: 'hint_policy', arguments: JSON.stringify({ policy: 'strict' }) } },
+    { type: 'tool/call', data: { name: 'hint_policy', arguments: '{broken json' } },
+  ])
+  const text = sections.get('attempts:status').text({ agent: { session } })
+  assert.match(text, /Hint policy: STRICT/, 'latest hint_policy wins')
+  assert.doesNotMatch(text, /not yet confirmed/, 'folded policy counts as confirmed')
+})
+
 test('section nudges after several steps without attempt_update, update clears it', async () => {
   const { tools, sections } = applyTracker()
   const section = sections.get('attempts:status')
