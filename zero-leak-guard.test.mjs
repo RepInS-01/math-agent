@@ -341,7 +341,7 @@ test('tool gate fails closed: missing agent or tracker service denies', () => {
 
 // ── attempt-tracker harness ─────────────────────────────────────────────────
 
-function applyTracker() {
+function applyTracker(config) {
   const provided = {}
   const tools = new Map()
   const sections = new Map()
@@ -350,15 +350,18 @@ function applyTracker() {
     tools: { register: (def) => tools.set(def.name, def) },
     systemPrompt: { section: (sec) => sections.set(sec.name, sec) },
   }
-  tracker.apply(ctx)
+  tracker.apply(ctx, config)
   assert.ok(provided.attemptState, 'tracker must provide attemptState')
   assert.ok(tools.has('attempt_update'), 'tracker must register attempt_update')
+  assert.ok(tools.has('hint_log'), 'tracker must register hint_log')
   assert.ok(sections.has('attempts:status'), 'tracker must register the attempts:status section')
   return { provided, tools, sections }
 }
 
 const fakeExec = (session) => ({ agent: { id: session.id, session } })
-const fakeSession = (id, events = []) => ({ id, events })
+// dsh-session ≥ 0.1.2-rc.1 removed the `events` getter in favor of
+// snapshotEvents(); the fake carries both so eventsOf's fallback stays covered.
+const fakeSession = (id, events = []) => ({ id, events, snapshotEvents: () => events })
 const callEvent = (attempts) => ({
   type: 'tool/call',
   data: { name: 'attempt_update', arguments: JSON.stringify({ attempts }) },
@@ -438,4 +441,83 @@ test('state folds back from session tool/call log after a resume', async () => {
   assert.match(text, /Validated: yes/, 'latest whole-list snapshot wins')
   assert.match(text, /contradiction/)
   assert.equal(provided.attemptState.isValidated('resumed'), true, 'fold must warm the guard-visible state')
+})
+
+// ── hint_log + stale nudge + strictness ─────────────────────────────────────
+
+test('hint_log records hints and the section renders the running count', async () => {
+  const { tools, sections } = applyTracker()
+  const session = fakeSession('s1')
+  const hintTool = tools.get('hint_log')
+
+  const r1 = await hintTool.execute({ level: 'L1', summary: 'name monotone convergence' }, fakeExec(session))
+  assert.deepEqual(r1, { hints: 1, level: 'L1' })
+  await hintTool.execute({ level: 'L2', summary: 'skeleton with blank induction step' }, fakeExec(session))
+
+  const text = sections.get('attempts:status').text({ agent: { session } })
+  assert.match(text, /Hints given this session: 2/)
+  assert.match(text, /L1 ×1 · L2 ×1 · L3 ×0/)
+  assert.match(hintTool.output.render({}, r1)[0].text, /Hint logged \(L1\)/)
+})
+
+test('hint_log rejects malformed input and agent-less calls', async () => {
+  const { tools } = applyTracker()
+  const hintTool = tools.get('hint_log')
+  await assert.rejects(hintTool.execute({ level: 'L9', summary: 'x' }, fakeExec(fakeSession('s1'))))
+  await assert.rejects(hintTool.execute({ level: 'L1', summary: '  ' }, fakeExec(fakeSession('s1'))))
+  await assert.rejects(hintTool.execute({ level: 'L1', summary: 'x' }, { agent: undefined }))
+})
+
+test('strict policy rejects L2/L3 hints programmatically', async () => {
+  const { tools, sections } = applyTracker({ strictness: 'strict' })
+  const session = fakeSession('s1')
+  const hintTool = tools.get('hint_log')
+
+  await assert.rejects(
+    hintTool.execute({ level: 'L2', summary: 'skeleton' }, fakeExec(session)),
+    /Strict hint policy/,
+  )
+  await assert.rejects(
+    hintTool.execute({ level: 'L3', summary: 'partial construction' }, fakeExec(session)),
+    /Strict hint policy/,
+  )
+  const ok = await hintTool.execute({ level: 'L1', summary: 'principle name' }, fakeExec(session))
+  assert.deepEqual(ok, { hints: 1, level: 'L1' }, 'rejected hints must not count')
+
+  const text = sections.get('attempts:status').text({ agent: { session } })
+  assert.match(text, /STRICT/)
+  assert.match(text, /Hints given this session: 1/)
+})
+
+test('section nudges after several steps without attempt_update, update clears it', async () => {
+  const { tools, sections } = applyTracker()
+  const section = sections.get('attempts:status')
+  const session = fakeSession('s1')
+
+  assert.doesNotMatch(section.text({ agent: { session } }), /without attempt_update/)
+  assert.doesNotMatch(section.text({ agent: { session } }), /without attempt_update/)
+  assert.doesNotMatch(section.text({ agent: { session } }), /without attempt_update/)
+  assert.match(section.text({ agent: { session } }), /without attempt_update/, '4th stale render nudges')
+
+  await tools.get('attempt_update').execute({ attempts: [VALID_ARGUMENT] }, fakeExec(session))
+  assert.doesNotMatch(section.text({ agent: { session } }), /without attempt_update/, 'update resets the counter')
+})
+
+test('hints fold back from the session log after a resume', () => {
+  const { sections } = applyTracker()
+  const session = fakeSession('resumed', [
+    { type: 'tool/call', data: { name: 'hint_log', arguments: JSON.stringify({ level: 'L1', summary: 's' }) } },
+    { type: 'tool/call', data: { name: 'hint_log', arguments: JSON.stringify({ level: 'L3', summary: 't' }) } },
+    { type: 'tool/call', data: { name: 'hint_log', arguments: '{broken json' } },
+    { type: 'tool/call', data: { name: 'bash', arguments: '{}' } },
+  ])
+  const text = sections.get('attempts:status').text({ agent: { session } })
+  assert.match(text, /Hints given this session: 2/, 'malformed records are skipped, valid ones fold')
+})
+
+test('legacy hosts without snapshotEvents fall back to session.events', async () => {
+  const { sections } = applyTracker()
+  const session = { id: 'legacy', events: [callEvent([VALID_ARGUMENT])] }
+  const text = sections.get('attempts:status').text({ agent: { session } })
+  assert.match(text, /monotone convergence/, 'fold works through the events getter fallback')
 })

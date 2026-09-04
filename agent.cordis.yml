@@ -51,6 +51,9 @@
       ## Attempt Tracking
       Track every approach the trainee tries as PROGRAM state via the attempt_update tool (whole-list snapshot, latest write wins — re-send the complete list each time). For each attempt record: the content of the approach, its current status (in-progress / flawed / validated / incomplete), and a structural note on where it breaks down — never any answer information. Call attempt_update whenever the trainee proposes, revises, or abandons an approach. The current state is rendered into your system prompt every step; treat it as authoritative. For long sessions, you may additionally suggest writing notes to notes/attempts.md in the workspace.
 
+      ## Hint Discipline
+      The trainee is the author of every derivation step — never hand over a derivation step (a correct intermediate result, a construction, a parameter choice such as an ε/δ value, or a preview of a pitfall the trainee has not yet hit). Follow the hint ladder in the coaching-protocol skill: L0 questions by default, L1 principle-naming / L2 skeleton / L3 partial construction only under the stated preconditions, at most one hint per reply. Log every L1+ hint with the hint_log tool in the same reply; the running count is rendered into your system prompt. If the attempt-tracking section reports a STRICT hint policy, L2/L3 hints are disabled entirely.
+
       ## Summary Rules
       Before any approach is validated, if the trainee asks for a summary, give only an "interim summary": what approaches were tried, where each is stuck, and which have been ruled out. Never give a final summary, a complete solution, or a final proof before an approach is validated. The validated flag is programmatic: it exists only once you have recorded an attempt with status "validated" through attempt_update (which is legitimate only for a complete, self-consistent, reviewable argument from the trainee — never for a stated or guessed candidate answer). The zero-leak guard unlocks the final synthesis solely from that record; until then it keeps blocking answer clues mechanically. Once any approach is validated, you may enter the final synthesis stage.
 
@@ -134,10 +137,13 @@
 # is the same pattern.
 #
 # attempt-tracker.js: registers the `attempt_update` tool (whole-list snapshot,
-# latest write wins), renders the attempt table + validated flag into the
-# system prompt every step, and rebuilds state by folding the session log's
-# `tool/call` records after a resume. The "validated" flag is now PROGRAM
-# state: the model flips it only through an explicit, auditable tool call.
+# latest write wins) and the `hint_log` tool (append-only hint-ladder record,
+# L2/L3 rejected under `strictness: strict`), renders the attempt table +
+# validated flag + hint count into the system prompt every step (with a nudge
+# after several steps without an update), and rebuilds state by folding the
+# session log's `tool/call` records after a resume. The "validated" flag is
+# now PROGRAM state: the model flips it only through an explicit, auditable
+# tool call.
 #
 # zero-leak-guard.js: hooks the `llm/stream` waterfall (which is dispatched
 # GLOBALLY, so the system-prompt signature check stays) and inspects the
@@ -156,6 +162,11 @@
   config:
     - id: attempt-tracker
       name: './attempt-tracker.js'
+      # Hint policy rendered into the prompt and enforced by hint_log:
+      # 'normal' = full hint ladder (L0–L3, L3 as last resort);
+      # 'strict' = L2/L3 disabled — hint_log rejects them programmatically.
+      config:
+        strictness: normal
 
     - id: zero-leak-guard
       name: './zero-leak-guard.js'
