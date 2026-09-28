@@ -1,0 +1,8 @@
+{
+  "name": "@local/math-agent-preset",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Math_Agent: a math training/coaching preset for DeepSeek Harness that never solves problems for the trainee.",
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}

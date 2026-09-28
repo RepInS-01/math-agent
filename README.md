@@ -9,7 +9,7 @@ Rather than solving problems for the trainee, it provides rapid feedback to help
 - 🧑‍🏫 **Coach, Not Solver**: Never gives complete solutions, key steps, or final answers. Follows the trainee's reasoning, confirms correct parts, and flags issues.
 - 📋 **Pre-Session Check**: Before each training session, verifies that the problem is well-defined, conditions are sufficient, and there are no errors.
 - 🧠 **Programmatic Attempt Tracking**: Approaches tried by the trainee are recorded as program state via the `attempt_update` tool (status: in-progress / flawed / validated / incomplete), rendered into the system prompt every step, and rebuilt from the session log after a resume. The coach is nudged in the prompt after several rounds without an update. For longer sessions, attempts can additionally be persisted to `notes/attempts.md`.
-- 🪜 **Hint Ladder & Per-Session Hint Policy**: Coaching feedback follows a four-level hint ladder (L0 questions → L1 principle-naming → L2 skeleton → L3 partial construction, last resort only). Every L1+ hint is logged via the `hint_log` tool and counted in the system prompt — a rising count is a signal to slow down. At session start the coach asks the trainee for the hint policy via `ask_user_question` (strict = L0/L1 only; normal = full ladder) and records it with the `hint_policy` tool — per-session, resumable, switchable mid-session. The `strictness` value in `agent.cordis.yml` is only the default for sessions that never chose (ships as `strict`); under a strict policy `hint_log` rejects L2/L3 programmatically.
+- 🪜 **Hint Ladder & Per-Session Hint Policy**: Coaching feedback follows a four-level hint ladder (L0 questions → L1 principle-naming → L2 skeleton → L3 partial construction, last resort only). Every L1+ hint is logged via the `hint_log` tool and counted in the system prompt — a rising count is a signal to slow down. At session start the coach asks the trainee for the hint policy via `ask_user_question` (strict = L0/L1 only; normal = full ladder) and records it with the `hint_policy` tool — per-session, resumable, switchable mid-session. The `strictness` value in `cordis.patch.yml` is only the default for sessions that never chose (ships as `strict`); under a strict policy `hint_log` rejects L2/L3 programmatically.
 - 🚦 **Summary Discipline**: Only interim summaries are allowed before an approach is fully validated; the final summary is unlocked programmatically — the zero-leak guard stands down only once an attempt is recorded as `validated` through `attempt_update`, never on the model's own say-so.
 - 📚 **Final Synthesis**: The final review revisits every approach explored during the session, identifies the trainee's own reasoning patterns, and avoids dismissing "flawed" paths outright.
 - 🔒 **Programmatic Zero-Leak Guard** (core highlight): A stream-level guard on `llm/stream` that inspects the coach's entire reply. When answer clues (numerical values, intervals, correctness judgments, answer forms) are detected, the **entire response is replaced** — not a single character of the model's original output reaches the trainee. This does not rely on the model's "self-discipline."
@@ -19,13 +19,13 @@ Rather than solving problems for the trainee, it provides rapid feedback to help
 
 ```
 math-agent/
-├── preset.yml              # Preset metadata (name / description)
-├── agent.cordis.yml        # Cordis composition: tools, persona, skills, guard registration
-├── attempt-tracker.js      # Training-state plugin: attempt_update + hint_log + hint_policy tools, prompt injection, validated flag, stale-update nudge (folds from the session log)
-├── zero-leak-guard.js      # Programmatic zero-leak output guard plugin (loaded via relative path; copied with the preset)
+├── package.json          # Bundle manifest: declares `dsh.bundle.patch` → cordis.patch.yml
+├── cordis.patch.yml      # Bundle patch: the `preset-math-agent` declaration — display metadata + full Cordis plugin list (tools, persona, skills, guard registration)
+├── attempt-tracker.js    # Training-state plugin: attempt_update + hint_log + hint_policy tools, prompt injection, validated flag, stale-update nudge (folds from the session log)
+├── zero-leak-guard.js    # Programmatic zero-leak output guard plugin (relative path, anchored beside cordis.patch.yml)
 ├── zero-leak-guard.test.mjs # Test corpus: leak samples that must block, clean replies that must pass, tracker + unlock behavior
-├── README.md               # This file
-├── LICENSE                 # MIT License
+├── README.md             # This file
+├── LICENSE               # MIT License
 └── skills/
     ├── coaching-protocol/  # Coaching protocol: workflow, red lines, zero-leak rules
     ├── knowledge-base/     # Knowledge base integration interface (reserved)
@@ -34,17 +34,25 @@ math-agent/
 
 ## Installation
 
-Prerequisite: [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`npx @deepseek-ai/dsh web`). This preset is derived from the `standard` preset and uses the DSH agent-presets mechanism.
+Prerequisite: [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`npx @deepseek-ai/dsh web`), version **0.1.7 or newer**. This preset is derived from the `standard` preset and ships as a DSH **bundle** (`package.json` + `cordis.patch.yml`).
 
-```bash
-git clone https://github.com/RepInS-01/math-agent.git
-mkdir -p ~/.dsh/.agent-presets
-cp -r math-agent ~/.dsh/.agent-presets/
-```
+> DSH versions before 0.1.7 used a different mechanism (a `$DSH_HOME/.agent-presets/<id>/`
+> directory holding `preset.yml` + `agent.cordis.yml`). Nothing reads that directory any
+> more; the bundle form below is the only supported installation.
 
-The preset id is the directory name, so the preset must land as `~/.dsh/.agent-presets/math-agent/` (or `${DSH_HOME}/.agent-presets/math-agent/` if you run with a custom `DSH_HOME`). Discovery is live: the preset appears in the Web GUI immediately, no DSH restart needed.
+1. Clone the repository anywhere and **keep the checkout in place** — the bundle is installed by path reference, and the plugin/skill files are loaded from it:
 
-Mount validation (run after any modification): in the Web GUI, create a new session and select the **Math_Agent** preset. A successful selection means the composition mounted; on a mount failure the GUI reverts the selection to the default preset and shows the error. (Programmatically, the same check is `agentPresets.standingKeyFor('math-agent')`, callable from inside a DSH session.)
+   ```bash
+   git clone https://github.com/RepInS-01/math-agent.git
+   ```
+
+2. Install the bundle into your DSH profile, either way:
+   - **Web GUI**: open the sidebar's **Plugins** page and install the bundle from the checkout's absolute path; or
+   - **Agent**: in a session running the Creator mode (which enables the `plugin_manager` tool), ask the agent to `install_bundle` with `target` set to the checkout's absolute path. Bundle installation executes plugin code in the Host process, so it requires Full access or an approval.
+
+3. The **Math_Agent** preset (id: `math-agent`) appears in the preset roster. Sessions recorded with the legacy preset resume against this declaration unchanged, since the id is the same.
+
+Mount validation (run after any modification): create a new session and select the **Math_Agent** preset. A successful selection means the composition mounted; on a mount failure the GUI reverts the selection to the default preset and shows the error. Installed bundles and their row activation state can be inspected with the `plugin_manager` tool (`list_bundles` / `list_plugins`).
 
 ## Usage
 
@@ -84,7 +92,7 @@ node --test zero-leak-guard.test.mjs
 
 Run it after every change to `LEAK_PATTERNS`, `attempt-tracker.js`, or the guard's unlock logic. The corpus covers: leak samples that must be blocked, legitimate coaching replies that must pass, the validated-session unlock (and its fail-closed fallbacks), and the attempt tracker's state recording, hint logging (including the strict-policy rejection of L2/L3), stale-update nudge, prompt rendering, and session-log fold. Add every newly discovered leak variant to the block list and every reported false positive to the pass list.
 
-> **Reload caveat**: relative-path preset plugins (`./attempt-tracker.js`, `./zero-leak-guard.js`) are imported through Node's ESM loader with no cache busting. After editing plugin code or `agent.cordis.yml`, **restart the DSH host** (`dsh web`) — re-selecting the preset in the UI is not enough, as re-mounting reuses the cached module. Skill files (`skills/**/SKILL.md`) are re-read from disk per session and do not need a restart.
+> **Reload caveat**: relative-path preset plugins (`./attempt-tracker.js`, `./zero-leak-guard.js`) are imported through Node's ESM loader with no cache busting. After editing plugin code or `cordis.patch.yml`, **restart the DSH host** (`dsh web`) — if the composition itself changed, reinstall the bundle from the Plugins page as well. Re-selecting the preset in the UI alone is not enough, as re-mounting reuses the cached module. Skill files (`skills/**/SKILL.md`) are re-read from disk per session and do not need a restart.
 
 ## Knowledge Base Integration (Reserved)
 
@@ -96,9 +104,9 @@ Run it after every change to `LEAK_PATTERNS`, `attempt-tracker.js`, or the guard
 
 ## Customization
 
-- Modify persona / coaching protocol: edit the `persona` section in `agent.cordis.yml` and `skills/coaching-protocol/SKILL.md`.
+- Modify persona / coaching protocol: edit the `persona` row in `cordis.patch.yml` and `skills/coaching-protocol/SKILL.md`.
 - Modify guard patterns: edit `LEAK_PATTERNS` in `zero-leak-guard.js`.
-- Always re-check the mount after changes: re-select the preset in the Web GUI (a failed mount reverts the selection to the default), or call `agentPresets.standingKeyFor('math-agent')` from a DSH session.
+- Always re-check the mount after changes: re-select the preset in the Web GUI (a failed mount reverts the selection to the default), or inspect the `preset-math-agent` row's activation state with the `plugin_manager` tool (`list_plugins`).
 
 ## Acknowledgments
 

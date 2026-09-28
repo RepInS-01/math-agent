@@ -34,7 +34,7 @@ const loadPlugin = async (file) =>
 const guard = await loadPlugin('zero-leak-guard.js')
 const tracker = await loadPlugin('attempt-tracker.js')
 
-// Mirrors the persona text in agent.cordis.yml — the guard activates on these
+// Mirrors the persona text in cordis.patch.yml — the guard activates on these
 // signatures. If the persona wording changes, update this AND expect the
 // "non-coaching passthrough" tests to keep guarding the coupling.
 const COACHING_SYSTEM = 'You are a Math Coach ... ## Zero-Leak Iron Rules ...'

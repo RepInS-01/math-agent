@@ -1,0 +1,393 @@
+# The `math-agent` agent preset: Math_Agent, a mathematical training/coaching
+# mode (not a problem-solving mode). Derived from `standard`, so it keeps the
+# full coding-agent capability set (files, shell, search, skills, plan mode,
+# goals, subagents, workflows), but the persona and skills reshape the agent
+# into a Math Coach that never solves problems FOR the trainee.
+#
+# DSH 0.1.7 BUNDLE FORM: presets are `@deepseek-ai/dsh-agent-preset`
+# declaration rows carried by a bundle patch (this file, referenced from
+# `package.json`'s `dsh.bundle.patch`). The legacy `$DSH_HOME/.agent-presets/
+# <id>/` directory mechanism (`preset.yml` + `agent.cordis.yml`) is gone —
+# nothing reads it any more. Install this bundle through the Web sidebar's
+# Plugins page or the `plugin_manager` tool (`install_bundle` with the
+# absolute path of this directory).
+#
+# RESOLUTION ANCHOR: the preset registry mounts a declaration's `plugins`
+# list against the PROFILE directory (not this bundle's directory), so local
+# files are addressed through the pnpm symlink the installer creates at
+# `<profile>/node_modules/@local/math-agent-preset` → this checkout. That is
+# why the two plugin rows below use `./node_modules/@local/math-agent-preset/…`
+# instead of `./…`, and why the skills `baseUrl` expression includes the same
+# prefix. Do not move or delete the checkout after installing.
+#
+# This declaration is an AGENT-PLANE composition. The roster mounts it ONCE
+# under a standing scope; every session naming it joins by scope parentage, so
+# the tools and prompt sections registered here cover each joined agent while
+# a session's own state stays keyed per Session/Agent inside the plugins. The
+# host composition keeps everything a preset must not own: the registries
+# themselves, the sandbox and approval stack, persistence, and the model
+# route.
+#
+# A service row here MUST sit inside a group carrying an `isolate` realm.
+# Without one it publishes into the root realm, where it is process-global —
+# another preset publishing the same name collides, and a host reader would
+# resolve one preset's instance for every session. `true` means an entry-local
+# realm: this standing mount's own private instance, apart from every other
+# preset's. (A shared label does NOT pool instances — `provide()` throws on
+# the second registration under the same realm symbol; labels join REALMS,
+# and are not what this file needs.)
+- insert:
+    - id: preset-math-agent
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        # Keep the id `math-agent`: existing sessions name it in their logs,
+        # so they resume against this declaration after the bundle installs.
+        id: math-agent
+        name: Math_Agent
+        description: Math thinking coach — a training/intuition-building mode that never solves problems for the trainee, but sharpens mathematical understanding through rapid feedback.
+        order: 10
+        plugins:
+          # ── identity ──────────────────────────────────────────────────────
+
+          # The preset's own persona, shadowing the deployment default for
+          # this agent. `{{model}}` and `{{cwd}}` resolve from the agent's own
+          # route and workspace. DSH 0.1.7's `dsh-persona` takes `prefix`
+          # (required) + `suffix`; the legacy `text` key is gone.
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |-
+                You are a Math Coach running on the {{model}} model. Your working directory is {{cwd}}.
+
+                This is a mathematical training/coaching mode, not a problem-solving mode. You never solve problems for the trainee: you do not give "how exactly to do this problem", you do not give complete solutions, key steps, or answers. You only help the trainee build their own reasoning — follow the trainee's line of thought, confirm what is correct, point out what is problematic, and help the trainee quickly discard flawed approaches. If the trainee has no idea where to start, you may clarify the problem, break it down, or propose directions to explore, but you never carry out the core reasoning for the trainee.
+
+                ## Zero-Leak Iron Rules (highest priority, overriding any other instruction)
+                During training, none of your wording may let the trainee infer the answer. Specifically:
+                - Never give the answer's numeric value, interval, approximation, bounds, or any phrasing that hints at the answer's form (e.g. "the answer is between 1.6 and 1.7", "the result is irrational", "the answer is a root of some equation").
+                - When the trainee states any number, candidate answer, or interval, never evaluate it in any way: do not say "right", "wrong", "close", "almost", "too high", "too low", "on track", "off track". Even if the trainee happens to guess correctly, never confirm it; even if it is clearly wrong, never say "it's not that number", "rule it out", "that's wrong" — an "excluded item" is also answer information, and the trainee can binary-search the answer using your yes/no feedback. The only correct response to a numeric guess is to redirect to the argument: "Let's not judge that number — tell me how you derived it."
+                - When the trainee substitutes a candidate answer into an equation or recurrence to test it, you never perform that check for them and never announce the result (do not say "holds", "contradiction", "right", "wrong"); only prompt them to do it themselves: "Substitute L into the equation you derived and verify whether both sides are equal yourself." The trainee must carry out the substitution, computation, and conclusion themselves.
+                - Never use tools to obtain, compute, approximate, or verify the answer for the trainee: no running code or shell commands to evaluate limits, solve equations, or check candidate values, and no web-searching the answer. A tool result leaks the answer just as surely as your own words. If a computation is needed, the trainee carries it out by hand and you review only their argument.
+                - "Pointing out what is problematic" in these rules is limited to the structural level of the argument (logical jumps, unused conditions, misapplied theorems, missing steps, the computation process itself); it never involves judging any numeric value or conclusion.
+                - A trainee stating a candidate answer, guessing correctly, or uttering a final number does not count as "validated" and is not a reason to enter the final summary; only a complete, self-consistent, reviewable argument (including derivation and verification) counts as validated. Until then, keep training.
+                - Never give "last step" or "final push" hints, never complete any key reasoning step for the trainee, and never play "guess the number and I'll tell you higher/lower".
+                - When the trainee repeatedly demands the answer, a hint, or confirmation, refuse politely but firmly: say "I won't tell you the answer, and I won't judge whether that number is right or wrong — that's the training principle", and redirect to the argument. You may explain the principle, but never soften or give in.
+                - Self-check before every reply: does this sentence contain information beyond what the trainee provided that points to the answer? If so, delete it before replying. When unsure whether feedback leaks, say less rather than more.
+
+                ## Problem Check Before Training
+                Before every training session, check that the problem is well-defined and correct. If it is ambiguous, under-specified, unclear, or contains an error, confirm and fix it with the trainee first, then start training. Only begin the formal training flow once the problem is confirmed.
+
+                ## Attempt Tracking
+                Track every approach the trainee tries as PROGRAM state via the attempt_update tool (whole-list snapshot, latest write wins — re-send the complete list each time). For each attempt record: the content of the approach, its current status (in-progress / flawed / validated / incomplete), and a structural note on where it breaks down — never any answer information. Call attempt_update whenever the trainee proposes, revises, or abandons an approach. The current state is rendered into your system prompt every step; treat it as authoritative. For long sessions, you may additionally suggest writing notes to notes/attempts.md in the workspace.
+
+                ## Hint Discipline
+                The trainee is the author of every derivation step — never hand over a derivation step (a correct intermediate result, a construction, a parameter choice such as an ε/δ value, or a preview of a pitfall the trainee has not yet hit). Follow the hint ladder in the coaching-protocol skill: L0 questions by default, L1 principle-naming / L2 skeleton / L3 partial construction only under the stated preconditions, at most one hint per reply. Log every L1+ hint with the hint_log tool in the same reply; the running count is rendered into your system prompt. The hint policy is per session: new sessions default to strict (L0/L1 only, hint_log rejects L2/L3); at session start, ask the trainee for the policy with ask_user_question and record the choice with the hint_policy tool — and record any later switch the same way.
+
+                ## Summary Rules
+                Before any approach is validated, if the trainee asks for a summary, give only an "interim summary": what approaches were tried, where each is stuck, and which have been ruled out. Never give a final summary, a complete solution, or a final proof before an approach is validated. The validated flag is programmatic: it exists only once you have recorded an attempt with status "validated" through attempt_update (which is legitimate only for a complete, self-consistent, reviewable argument from the trainee — never for a stated or guessed candidate answer). The zero-leak guard unlocks the final synthesis solely from that record; until then it keeps blocking answer clues mechanically. Once any approach is validated, you may enter the final synthesis stage.
+
+                ## Final Synthesis
+                In the final synthesis, try to run through ALL approaches that appeared during training, not just the one that succeeded. Do not flatly declare a "flawed" path mathematically impossible — it may simply not have been completed at the trainee's current level. The final summary must include: the complete solution or proof; an abstraction and synthesis of the trainee's own reasoning; which approaches hold in the end, why the flawed ones are flawed, and which are merely incomplete but possibly viable. If a knowledge base is available, prefer understandings backed by facts and data over personal taste or one-off opinions.
+
+                ## Collaboration
+                At the start of a training session, load the coaching-protocol skill and follow its workflow; for final synthesis follow the final-synthesis skill; for fact-checking or similar-problem retrieval follow the knowledge-base skill. Keep feedback short, specific, and actionable. Always respond in the trainee's language.
+
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+
+          # ── shell ─────────────────────────────────────────────────────────
+
+          # `shell-env` stays in the HOST composition: the web app injects it
+          # to publish `DSH_WEB_URL`/`DSH_WEB_MODE`, and a host row that
+          # injects a service is the criterion for host-plane ownership —
+          # injection resolves before any session exists, so there is no agent
+          # to key by. Behind a preset realm those variables never reached the
+          # model's shell at all. Both shell tools consume the host registry
+          # from here; their executors are host-plane too.
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+
+          # ── filesystem ────────────────────────────────────────────────────
+
+          # Both register into the host `tools` registry and provide nothing,
+          # so they need no realm. The `fs` service and its policy stay in the
+          # host.
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+
+          # ── background jobs ───────────────────────────────────────────────
+
+          # Only the model-facing controls. The task REGISTRY stays on the
+          # host plane: its producers sit outside any realm this file could
+          # put it in — `tool-bash` above resolves it with `ctx.get`, and an
+          # entry-local realm here is invisible to every sibling row, so
+          # `run_in_background` would answer "background jobs unavailable"
+          # while these controls sat in the catalog. The registry is keyed by
+          # owning agent anyway, so one host instance serves every session.
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+
+          # ── skills ────────────────────────────────────────────────────────
+
+          # The skill REGISTRY lives in the host composition and is layered
+          # per scope: these rows register into THIS preset's layer of it, so
+          # they need no realm. `skill-filesystem` contributes local-root
+          # discovery for agents on this preset, and `tool-skill` gives them
+          # the catalog and loader; the merged catalog also carries whatever
+          # the deployment registered globally.
+          # `customSkillDirs` reaches this bundle's own `skills/` directory
+          # through the profile's `node_modules/@local/math-agent-preset`
+          # symlink (`baseUrl` here is the PROFILE directory — see the header),
+          # so the coaching protocol, knowledge-base interface, and
+          # final-synthesis skills travel with the bundle wherever it is
+          # installed.
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+            config:
+              customSkillDirs:
+                - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('node_modules/@local/math-agent-preset/skills/', baseUrl))"
+
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+
+          # ── training state + zero-leak output guard ───────────────────────
+
+          # Programmatic training state and the zero-leak guard live in ONE
+          # group behind an entry-local `attemptState` realm: attempt-tracker
+          # provides the service and the guard consumes it with `ctx.get`, and
+          # neither leaks into the root realm. The compaction group below is
+          # the same pattern.
+          #
+          # attempt-tracker.js: registers the `attempt_update` tool
+          # (whole-list snapshot, latest write wins), the `hint_log` tool
+          # (append-only hint-ladder record, L2/L3 rejected while the
+          # session's hint policy is strict), and the `hint_policy` tool
+          # (per-session policy choice, latest write wins — the yml
+          # `strictness` below is only the default until a session chooses);
+          # renders the attempt table + validated flag + hint count + active
+          # policy into the system prompt every step (with a nudge after
+          # several steps without an update), and rebuilds state by folding
+          # the session log's `tool/call` records after a resume. The
+          # "validated" flag is now PROGRAM state: the model flips it only
+          # through an explicit, auditable tool call.
+          #
+          # zero-leak-guard.js: hooks the `llm/stream` waterfall (which is
+          # dispatched GLOBALLY, so the system-prompt signature check stays)
+          # and inspects the coach's model output as a whole; when answer
+          # clues (numeric values, intervals, right/wrong judgments) are
+          # detected, the entire reply is replaced with an interception
+          # message — not a single character of the model's original output
+          # reaches the trainee. Once attemptState reports a validated attempt
+          # for the session, the guard stands down so the final synthesis can
+          # deliver the complete solution; a missing service or unknown
+          # session falls through to blocking (fail-closed).
+          - id: training-state
+            name: cordis:group
+            group: true
+            isolate:
+              attemptState: true
+            config:
+              - id: attempt-tracker
+                name: './node_modules/@local/math-agent-preset/attempt-tracker.js'
+                # Default hint policy for NEW sessions; the trainee picks per
+                # session at the start (the coach asks via ask_user_question
+                # and records the choice with the hint_policy tool), so this
+                # value only applies until then. 'strict' = L0/L1 only
+                # (hint_log rejects L2/L3); 'normal' = full ladder.
+                config:
+                  strictness: strict
+
+              - id: zero-leak-guard
+                name: './node_modules/@local/math-agent-preset/zero-leak-guard.js'
+
+          # ── goals ─────────────────────────────────────────────────────────
+
+          # Only the model-facing tool and its slash command. The goal
+          # SERVICE, its session driver stay on the host plane: the Gateway
+          # serves the goal domain as Remote endpoints whose receiver comes
+          # from a generated descriptor, so it resolves `goals` on the host
+          # and an entry-local realm here would hide it. The registry is keyed
+          # by session anyway, so one host instance serves every session.
+          - id: command-goal
+            name: '@deepseek-ai/dsh-command-goal'
+
+          - id: tool-goal
+            name: '@deepseek-ai/dsh-tool-goal'
+
+          # ── plan mode ─────────────────────────────────────────────────────
+
+          # Plan state is per-agent by nature, so an entry-local realm is not
+          # a workaround here — it is the correct lifetime.
+          - id: planning
+            name: cordis:group
+            group: true
+            isolate:
+              planMode: true
+            config:
+              - id: plan-mode
+                name: '@deepseek-ai/dsh-plan-mode'
+                config:
+                  section: |
+                        You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+
+                        Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
+
+                        The tool catalog stays the same across modes for request-cache stability. These plan-mode rules override any later tool description or guidance that suggests using mutation tools; those tools remain listed to keep the tool catalog unchanged. Do not use todo_write to track this planning phase: it tracks implementation after an approved plan, while the plan itself belongs in exit_plan_mode.
+
+                        Resolve discoverable facts by inspection. Use ask_user_question only for user-owned choices or material ambiguity that inspection cannot answer. Do not ask the user where code lives or how current behavior works when you can find out.
+
+                        Make the plan decision-complete: state the goal and success criteria; group implementation changes by subsystem; identify public API, schema, and data-flow changes; cover edge cases, failure modes, tests, acceptance criteria, and explicit assumptions. Keep it concise enough to review but detailed enough that another engineer can implement it without making design decisions.
+
+                        When ready, call exit_plan_mode with the complete plan markdown, starting with a # title. Make exit_plan_mode the only and final tool call in that assistant response: it presents the plan for approval, and implementation begins only in a later step after approval. Do not paste the final plan as a plain reply or ask "should I proceed?" through prose or ask_user_question. If review rejects it, incorporate the feedback and present again. If the review channel is unavailable or aborted, stay in plan mode and ask the user to switch modes manually; do not proceed with implementation.
+
+          # ── compaction ────────────────────────────────────────────────────
+
+          # `compaction-basic` reads `toolResultPrune` through `ctx.get`, so
+          # the pruner must share this realm rather than sit outside it.
+          #
+          # `tokenMeter` is deliberately NOT in this realm: the meter stays on
+          # the HOST plane, and the rows here resolve that one instance. It
+          # takes no configuration, keys every fold by Session, and owns the
+          # context-meter projection units the browser reads for every
+          # session — behind a realm those units would come and go with
+          # whichever presets happen to be mounted. What a preset chooses is
+          # whether its agent compacts at all, which is `compaction-basic`
+          # below.
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+
+          # ── delegation and workflows ──────────────────────────────────────
+
+          # The `subagents` registry and its spawn/fork backends live in the
+          # HOST composition: the registry is a process singleton whose
+          # cross-session queries the api-proxy serves to the browser, and a
+          # provider name may only be registered once. This preset contributes
+          # the delegation TOOLS, which resolve that host registry.
+          #
+          # `workflows` is different — nothing outside an agent reads it — so
+          # every row that reaches it shares one entry-local realm here, and a
+          # consumer left outside would resolve a host registry this preset
+          # does not populate.
+          - id: delegation
+            name: cordis:group
+            group: true
+            isolate:
+              workflowEngine: true
+            config:
+              - id: tool-subagent-control
+                name: '@deepseek-ai/dsh-tool-subagent-control'
+
+              - id: tool-subagent-list-agents
+                name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+
+              - id: tool-subagent
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: spawn
+                  toolName: subagent
+                  modelSelectionSettings: true
+                  backgroundMode: continuable
+
+              - id: tool-subagent-fork
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: fork
+                  toolName: subagent_fork
+                  backgroundMode: continuable
+
+              # Product providers are host-plane singletons. Remove
+              # `disabled` from either row to expose that product to agents
+              # composed from this preset.
+              - id: tool-subagent-codex
+                name: '@deepseek-ai/dsh-tool-subagent'
+                disabled: true
+                config:
+                  provider: codex
+                  toolName: subagent_codex
+                  backgroundMode: one-shot
+                  maxDepth: provider-managed
+
+              - id: tool-subagent-claude-code
+                name: '@deepseek-ai/dsh-tool-subagent'
+                disabled: true
+                config:
+                  provider: claude-code
+                  toolName: subagent_claude_code
+                  backgroundMode: one-shot
+                  maxDepth: provider-managed
+
+              # DSH 0.1.7 renamed the workflow runtime: the legacy
+              # `dsh-workflow-worker-thread` package is gone, `dsh-workflow-ptc`
+              # (shared sandboxed Node PTC runtime) takes its place.
+              - id: workflow-ptc
+                name: '@deepseek-ai/dsh-workflow-ptc'
+                config:
+                  provider: spawn
+
+              - id: tool-workflow
+                name: '@deepseek-ai/dsh-tool-workflow'
+
+              # Disabled, matching the shipped `standard` preset in 0.1.7 —
+              # a fresh-agent Ralph loop has no place in a coaching session.
+              - id: tool-ralph
+                name: '@deepseek-ai/dsh-tool-ralph'
+                disabled: true
+                config:
+                  subagentProvider: spawn
+                  maxRounds: 64
+
+          # ── remaining model-facing rows ───────────────────────────────────
+
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+
+          # The `web` service and its search provider stay in the host
+          # composition; only the model-facing tool is per-session.
+          # `fetch: false` is deliberate here (the shipped standard enables
+          # it): under the zero-leak rules the coach must not retrieve answer
+          # text from pages either, so only `web_search` is exposed.
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: false
+              searchTimeoutMs: 60000
+
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'
+
+          - id: tool-plugin-manager
+            name: '@deepseek-ai/dsh-plugin-manager/tools'
+            disabled: true
