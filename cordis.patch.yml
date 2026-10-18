@@ -4,13 +4,15 @@
 # goals, subagents, workflows), but the persona and skills reshape the agent
 # into a Math Coach that never solves problems FOR the trainee.
 #
-# DSH 0.1.7 BUNDLE FORM: presets are `@deepseek-ai/dsh-agent-preset`
-# declaration rows carried by a bundle patch (this file, referenced from
-# `package.json`'s `dsh.bundle.patch`). The legacy `$DSH_HOME/.agent-presets/
-# <id>/` directory mechanism (`preset.yml` + `agent.cordis.yml`) is gone —
-# nothing reads it any more. Install this bundle through the Web sidebar's
-# Plugins page or the `plugin_manager` tool (`install_bundle` with the
-# absolute path of this directory).
+# DSH 0.2.1 BUNDLE FORM (unchanged since 0.1.7): presets are
+# `@deepseek-ai/dsh-agent-preset` declaration rows carried by a bundle patch
+# (this file, referenced from `package.json`'s `dsh.bundle.patch`). The legacy
+# `$DSH_HOME/.agent-presets/<id>/` directory mechanism (`preset.yml` +
+# `agent.cordis.yml`) is gone — nothing reads it any more. Install this
+# bundle through the sidebar's Plugins page (Web and Desktop alike — Desktop
+# owns its `desktop` profile and refuses CLI package operations) or the
+# `plugin_manager` tool (`install_bundle` with the absolute path of this
+# directory).
 #
 # RESOLUTION ANCHOR: the preset registry mounts a declaration's `plugins`
 # list against the PROFILE directory (not this bundle's directory), so local
@@ -51,7 +53,7 @@
 
           # The preset's own persona, shadowing the deployment default for
           # this agent. `{{model}}` and `{{cwd}}` resolve from the agent's own
-          # route and workspace. DSH 0.1.7's `dsh-persona` takes `prefix`
+          # route and workspace. Since DSH 0.1.7 `dsh-persona` takes `prefix`
           # (required) + `suffix`; the legacy `text` key is gone.
           - id: persona
             name: '@deepseek-ai/dsh-persona'
@@ -96,6 +98,11 @@
             config:
               maxBytes: 65536
 
+          # New in DSH 0.2.1's shipped `standard`: durable per-step context
+          # with the current time and elapsed time.
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+
           # ── shell ─────────────────────────────────────────────────────────
 
           # `shell-env` stays in the HOST composition: the web app injects it
@@ -137,6 +144,12 @@
           # owning agent anyway, so one host instance serves every session.
           - id: tool-jobs
             name: '@deepseek-ai/dsh-tool-jobs'
+
+          # New in DSH 0.2.1's shipped `standard`: model-facing reminder
+          # management over the Host `schedule` service (schedule_create /
+          # schedule_list / schedule_update / schedule_delete).
+          - id: tool-schedule
+            name: '@deepseek-ai/dsh-tool-schedule'
 
           # ── skills ────────────────────────────────────────────────────────
 
@@ -239,7 +252,7 @@
                 name: '@deepseek-ai/dsh-plan-mode'
                 config:
                   section: |
-                        You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+                        You are in plan mode. Stay in plan mode until the user approves your plan through exit_plan_mode or switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
 
                         Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
 
@@ -314,35 +327,12 @@
                   provider: spawn
                   toolName: subagent
                   modelSelectionSettings: true
-                  backgroundMode: continuable
 
               - id: tool-subagent-fork
                 name: '@deepseek-ai/dsh-tool-subagent'
                 config:
                   provider: fork
                   toolName: subagent_fork
-                  backgroundMode: continuable
-
-              # Product providers are host-plane singletons. Remove
-              # `disabled` from either row to expose that product to agents
-              # composed from this preset.
-              - id: tool-subagent-codex
-                name: '@deepseek-ai/dsh-tool-subagent'
-                disabled: true
-                config:
-                  provider: codex
-                  toolName: subagent_codex
-                  backgroundMode: one-shot
-                  maxDepth: provider-managed
-
-              - id: tool-subagent-claude-code
-                name: '@deepseek-ai/dsh-tool-subagent'
-                disabled: true
-                config:
-                  provider: claude-code
-                  toolName: subagent_claude_code
-                  backgroundMode: one-shot
-                  maxDepth: provider-managed
 
               # DSH 0.1.7 renamed the workflow runtime: the legacy
               # `dsh-workflow-worker-thread` package is gone, `dsh-workflow-ptc`
@@ -355,14 +345,11 @@
               - id: tool-workflow
                 name: '@deepseek-ai/dsh-tool-workflow'
 
-              # Disabled, matching the shipped `standard` preset in 0.1.7 —
-              # a fresh-agent Ralph loop has no place in a coaching session.
-              - id: tool-ralph
-                name: '@deepseek-ai/dsh-tool-ralph'
-                disabled: true
-                config:
-                  subagentProvider: spawn
-                  maxRounds: 64
+          # DSH 0.2.1 dropped the `backgroundMode` config key from
+          # `dsh-tool-subagent` (the schema no longer declares it, and the
+          # shipped `standard` sets nothing) along with the codex /
+          # claude-code / ralph rows — this preset simply carries none of
+          # them now.
 
           # ── remaining model-facing rows ───────────────────────────────────
 
@@ -390,4 +377,10 @@
 
           - id: tool-plugin-manager
             name: '@deepseek-ai/dsh-plugin-manager/tools'
+            disabled: true
+
+          # New in DSH 0.2.1's shipped `standard` (disabled there too): the
+          # plugin_market agent tool over the Discover page's market indexes.
+          - id: tool-plugin-market
+            name: '@deepseek-ai/dsh-plugin-market/tools'
             disabled: true

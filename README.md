@@ -22,7 +22,7 @@ math-agent/
 ├── package.json          # Bundle manifest: declares `dsh.bundle.patch` → cordis.patch.yml
 ├── cordis.patch.yml      # Bundle patch: the `preset-math-agent` declaration — display metadata + full Cordis plugin list (tools, persona, skills, guard registration)
 ├── attempt-tracker.js    # Training-state plugin: attempt_update + hint_log + hint_policy tools, prompt injection, validated flag, stale-update nudge (folds from the session log)
-├── zero-leak-guard.js    # Programmatic zero-leak output guard plugin (relative path, anchored beside cordis.patch.yml)
+├── zero-leak-guard.js    # Programmatic zero-leak output guard plugin (addressed through the profile's node_modules symlink — see the RESOLUTION ANCHOR note in cordis.patch.yml)
 ├── zero-leak-guard.test.mjs # Test corpus: leak samples that must block, clean replies that must pass, tracker + unlock behavior
 ├── README.md             # This file
 ├── LICENSE               # MIT License
@@ -34,29 +34,29 @@ math-agent/
 
 ## Installation
 
-Prerequisite: [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`npx @deepseek-ai/dsh web`), version **0.1.7 or newer**. This preset is derived from the `standard` preset and ships as a DSH **bundle** (`package.json` + `cordis.patch.yml`).
+Prerequisite: [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) version **0.2.1 or newer** — either the **Desktop app** or the Web UI (`npx @deepseek-ai/dsh web`). This preset is derived from the `standard` preset and ships as a DSH **bundle** (`package.json` + `cordis.patch.yml`). (The previous commit supports 0.1.7; 0.2.1 added `dsh-tool-schedule` and `dsh-plugin-market`, which this preset's plugin list now references.)
 
 > DSH versions before 0.1.7 used a different mechanism (a `$DSH_HOME/.agent-presets/<id>/`
 > directory holding `preset.yml` + `agent.cordis.yml`). Nothing reads that directory any
 > more; the bundle form below is the only supported installation.
 
-1. Clone the repository anywhere and **keep the checkout in place** — the bundle is installed by path reference, and the plugin/skill files are loaded from it:
+1. Install the bundle into your DSH profile, either way:
+   - **GUI (Desktop and Web alike)**: open the left sidebar's **Plugins** page, choose **Add plugin**, and enter the spec `github:RepInS-01/math-agent`. On Desktop, package operations are owned by the app itself — the `dsh plugin --profile desktop` CLI is refused, so use the Plugins page; or
+   - **Agent**: in a session running the Creator mode (which enables the `plugin_manager` tool), ask the agent to `install_bundle` with `target` set to `github:RepInS-01/math-agent`. Bundle installation executes plugin code in the Host process, so it requires Full access or an approval.
+
+   **Developing on the preset instead?** Clone the repository, **keep the checkout in place**, and install the checkout's **absolute path** (e.g. `/Users/you/math-agent`) instead of the `github:` spec. The installer then adds a `link:` dependency, so edits to the checkout take effect after a restart:
 
    ```bash
    git clone https://github.com/RepInS-01/math-agent.git
    ```
 
-2. Install the bundle into your DSH profile, either way:
-   - **Web GUI**: open the sidebar's **Plugins** page and install the bundle from the checkout's absolute path; or
-   - **Agent**: in a session running the Creator mode (which enables the `plugin_manager` tool), ask the agent to `install_bundle` with `target` set to the checkout's absolute path. Bundle installation executes plugin code in the Host process, so it requires Full access or an approval.
-
-3. The **Math_Agent** preset (id: `math-agent`) appears in the preset roster. Sessions recorded with the legacy preset resume against this declaration unchanged, since the id is the same.
+2. Restart the app (Desktop: quit and reopen; Web: restart `dsh web`). The **Math_Agent** preset (id: `math-agent`) appears in the preset roster. Sessions recorded with the legacy preset resume against this declaration unchanged, since the id is the same.
 
 Mount validation (run after any modification): create a new session and select the **Math_Agent** preset. A successful selection means the composition mounted; on a mount failure the GUI reverts the selection to the default preset and shows the error. Installed bundles and their row activation state can be inspected with the `plugin_manager` tool (`list_bundles` / `list_plugins`).
 
 ## Usage
 
-1. In the DeepSeek Harness Web GUI, create a new session and select the **Math_Agent** preset (id: `math-agent`).
+1. In the DeepSeek Harness GUI (Desktop or Web), create a new session and select the **Math_Agent** preset (id: `math-agent`).
 2. Start a training session with a prompt like:
 
    > I'd like to start a math training exercise. Problem: Let aₙ = √(1 + aₙ₋₁), a₀ = 1. Prove that {aₙ} converges and find its limit. I'm thinking of using monotone convergence but I'm not sure how to prove boundedness.
@@ -68,7 +68,6 @@ Mount validation (run after any modification): create a new session and select t
 - Hooked into the `llm/stream` waterfall (dispatched process-wide); **only activates for requests whose system prompt contains coaching signatures** (zero-leak iron rules / math coach). All other sessions pass through untouched.
 - The model's full output text is inspected programmatically before delivery. If answer-clue patterns (intervals, correctness judgments, answer forms, decimal values, etc.) match, the **entire segment is replaced** with a fixed interception message.
 - Interception happens at the stream layer: session logs record the interception message, not the leaked text. On the next turn, the model sees its own interception notice and automatically reformulates in compliance.
-- **The unlock is program state, not model judgment**: the `attempt-tracker` plugin (mounted in the same isolate realm) holds the per-session attempt list. Once an attempt is recorded as `validated` via the `attempt_update` tool, the guard stands down so the final synthesis can deliver the complete solution. A missing tracker, an unknown session, or no validated attempt all fall through to blocking — fail-closed in every direction.
 - **The unlock is program state, not model judgment**: the `attempt-tracker` plugin (mounted in the same isolate realm) holds the per-session attempt list. Once an attempt is recorded as `validated` via the `attempt_update` tool, the guard stands down so the final synthesis can deliver the complete solution. A missing tracker, an unknown session, or no validated attempt all fall through to blocking — fail-closed in every direction.
 - **Compute/search tools are denied under the same lock**: a preset-layer `tools.guard` rejects `bash`, `pwsh`, `web_search`, and `run_code` until an attempt is validated. The stream inspection cannot see tool output, so the tools that could compute or retrieve the answer are disabled outright — and the denial lifts on the same program state as the final-synthesis unlock.
 - **Reasoning is hidden during the locked phase**: the coach's thinking routinely derives the answer outright, and the client UI renders reasoning rows to the trainee. While no attempt is validated, reasoning deltas collapse to a fixed placeholder and reasoning block payloads are rewritten — in original block order, keeping the persisted message consistent with pi-ai replay state. Reasoning flows again once an approach is validated.
@@ -92,7 +91,7 @@ node --test zero-leak-guard.test.mjs
 
 Run it after every change to `LEAK_PATTERNS`, `attempt-tracker.js`, or the guard's unlock logic. The corpus covers: leak samples that must be blocked, legitimate coaching replies that must pass, the validated-session unlock (and its fail-closed fallbacks), and the attempt tracker's state recording, hint logging (including the strict-policy rejection of L2/L3), stale-update nudge, prompt rendering, and session-log fold. Add every newly discovered leak variant to the block list and every reported false positive to the pass list.
 
-> **Reload caveat**: relative-path preset plugins (`./attempt-tracker.js`, `./zero-leak-guard.js`) are imported through Node's ESM loader with no cache busting. After editing plugin code or `cordis.patch.yml`, **restart the DSH host** (`dsh web`) — if the composition itself changed, reinstall the bundle from the Plugins page as well. Re-selecting the preset in the UI alone is not enough, as re-mounting reuses the cached module. Skill files (`skills/**/SKILL.md`) are re-read from disk per session and do not need a restart.
+> **Reload caveat**: relative-path preset plugins (`./attempt-tracker.js`, `./zero-leak-guard.js`) are imported through Node's ESM loader with no cache busting. After editing plugin code or `cordis.patch.yml`, **restart the DSH host** (Desktop: quit and reopen the app; Web: restart `dsh web`) — if the composition itself changed, reinstall the bundle from the Plugins page as well. Re-selecting the preset in the UI alone is not enough, as re-mounting reuses the cached module. Skill files (`skills/**/SKILL.md`) are re-read from disk per session and do not need a restart.
 
 ## Knowledge Base Integration (Reserved)
 
@@ -106,7 +105,7 @@ Run it after every change to `LEAK_PATTERNS`, `attempt-tracker.js`, or the guard
 
 - Modify persona / coaching protocol: edit the `persona` row in `cordis.patch.yml` and `skills/coaching-protocol/SKILL.md`.
 - Modify guard patterns: edit `LEAK_PATTERNS` in `zero-leak-guard.js`.
-- Always re-check the mount after changes: re-select the preset in the Web GUI (a failed mount reverts the selection to the default), or inspect the `preset-math-agent` row's activation state with the `plugin_manager` tool (`list_plugins`).
+- Always re-check the mount after changes: re-select the preset in the GUI (a failed mount reverts the selection to the default), or inspect the `preset-math-agent` row's activation state with the `plugin_manager` tool (`list_plugins`).
 
 ## Acknowledgments
 
