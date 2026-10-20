@@ -1,5 +1,7 @@
 # Math_Agent
 
+English | [中文](README.zh.md)
+
 A **math training preset** for DeepSeek Harness — not a problem solver.
 
 Rather than solving problems for the trainee, it provides rapid feedback to help sharpen mathematical understanding and build intuition. It features a **programmatic zero-leak output guard** that mechanically prevents the coach from ever revealing the answer.
@@ -25,6 +27,7 @@ math-agent/
 ├── zero-leak-guard.js    # Programmatic zero-leak output guard plugin (addressed through the profile's node_modules symlink — see the RESOLUTION ANCHOR note in cordis.patch.yml)
 ├── zero-leak-guard.test.mjs # Test corpus: leak samples that must block, clean replies that must pass, tracker + unlock behavior
 ├── README.md             # This file
+├── README.zh.md          # 中文说明
 ├── LICENSE               # MIT License
 └── skills/
     ├── coaching-protocol/  # Coaching protocol: workflow, red lines, zero-leak rules
